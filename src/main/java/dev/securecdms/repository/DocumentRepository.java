@@ -1,7 +1,10 @@
 package dev.securecdms.repository;
 
 import dev.securecdms.model.Document;
+import dev.securecdms.model.Folder;
 import dev.securecdms.model.User;
+
+import java.util.List;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -13,6 +16,10 @@ import org.springframework.stereotype.Repository;
 public interface DocumentRepository extends JpaRepository<Document, Long> {
 
     Page<Document> findByOwner(User owner, Pageable pageable);
+
+    List<Document> findByOwnerAndFolder(User owner, Folder folder);
+
+    List<Document> findByOwnerAndFolderIsNull(User owner);
 
     @Query("""
         SELECT d FROM Document d

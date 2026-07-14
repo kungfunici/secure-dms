@@ -33,10 +33,15 @@ public class GlobalExceptionHandler {
         return buildResponse(HttpStatus.UNAUTHORIZED, "Invalid credentials", null);
     }
 
-    @ExceptionHandler(UsernameAlreadyExistsException.class)
-    public ResponseEntity<Map<String, Object>> handleUsernameExists(UsernameAlreadyExistsException ex) {
-        return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
-    }
+@ExceptionHandler(UsernameAlreadyExistsException.class)
+public ResponseEntity<Map<String, Object>> handleUsernameExists(UsernameAlreadyExistsException ex) {
+    return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
+}
+
+@ExceptionHandler(EmailAlreadyExistsException.class)
+public ResponseEntity<Map<String, Object>> handleEmailExists(EmailAlreadyExistsException ex) {
+    return buildResponse(HttpStatus.CONFLICT, ex.getMessage(), null);
+}
 
     @ExceptionHandler(ResourceNotFoundException.class)
     public ResponseEntity<Map<String, Object>> handleNotFound(ResourceNotFoundException ex) {

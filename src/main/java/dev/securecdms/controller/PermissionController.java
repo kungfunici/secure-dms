@@ -1,6 +1,7 @@
 package dev.securecdms.controller;
 
-import dev.securecdms.dto.request.PermissionRequest;
+import dev.securecdms.dto.request.ShareRequest;
+import dev.securecdms.dto.response.PermissionResponse;
 import dev.securecdms.service.PermissionService;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
@@ -19,40 +20,23 @@ public class PermissionController {
     private final PermissionService permissionService;
 
     @GetMapping
-    public ResponseEntity<List<PermissionService.PermissionInfo>> list(
-            @PathVariable Long documentId,
-            @AuthenticationPrincipal UserDetails userDetails) {
-
-        return ResponseEntity.ok(
-                permissionService.listPermissions(documentId, userDetails.getUsername()));
+    public ResponseEntity<List<PermissionResponse>> list(@PathVariable Long documentId,
+                                                          @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(permissionService.list(documentId, userDetails.getUsername()));
     }
 
     @PostMapping
-    public ResponseEntity<Void> grant(
-            @PathVariable Long documentId,
-            @Valid @RequestBody PermissionRequest request,
-            @AuthenticationPrincipal UserDetails userDetails) {
-
-        permissionService.grantPermission(
-                documentId,
-                userDetails.getUsername(),
-                request.getUsername(),
-                request.getPermissionType());
-
-        return ResponseEntity.ok().build();
+    public ResponseEntity<PermissionResponse> grant(@PathVariable Long documentId,
+                                                     @Valid @RequestBody ShareRequest request,
+                                                     @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(permissionService.grant(documentId, request, userDetails.getUsername()));
     }
 
-    @DeleteMapping("/{targetUsername}")
-    public ResponseEntity<Void> revoke(
-            @PathVariable Long documentId,
-            @PathVariable String targetUsername,
-            @AuthenticationPrincipal UserDetails userDetails) {
-
-        permissionService.revokePermission(
-                documentId,
-                userDetails.getUsername(),
-                targetUsername);
-
+    @DeleteMapping("/{userId}")
+    public ResponseEntity<Void> revoke(@PathVariable Long documentId,
+                                       @PathVariable Long userId,
+                                       @AuthenticationPrincipal UserDetails userDetails) {
+        permissionService.revoke(documentId, userId, userDetails.getUsername());
         return ResponseEntity.noContent().build();
     }
 }

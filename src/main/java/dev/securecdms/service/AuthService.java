@@ -4,6 +4,7 @@ import dev.securecdms.dto.request.LoginRequest;
 import dev.securecdms.dto.request.RefreshTokenRequest;
 import dev.securecdms.dto.request.RegisterRequest;
 import dev.securecdms.dto.response.AuthResponse;
+import dev.securecdms.exception.EmailAlreadyExistsException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.exception.UsernameAlreadyExistsException;
 import dev.securecdms.model.Role;
@@ -42,7 +43,7 @@ public class AuthService {
         if (userRepository.existsByUsername(request.getUsername()))
             throw new UsernameAlreadyExistsException("Username already taken: " + request.getUsername());
         if (userRepository.existsByEmail(request.getEmail()))
-            throw new UsernameAlreadyExistsException("Email already registered: " + request.getEmail());
+            throw new EmailAlreadyExistsException("Email already registered: " + request.getEmail());
 
         User user = User.builder()
                 .username(request.getUsername())

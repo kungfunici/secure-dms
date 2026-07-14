@@ -29,9 +29,10 @@ public class DocumentController {
     public ResponseEntity<DocumentResponse> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "description", required = false) String description,
+            @RequestParam(value = "folderId", required = false) Long folderId,
             @AuthenticationPrincipal UserDetails userDetails) throws IOException {
 
-        DocumentResponse response = documentService.upload(file, description, userDetails.getUsername());
+        DocumentResponse response = documentService.upload(file, description, folderId, userDetails.getUsername());
         return ResponseEntity.ok(response);
     }
 

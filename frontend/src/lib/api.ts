@@ -45,7 +45,24 @@ export interface DocumentResponse {
   fileSize: number
   description: string
   ownerUsername: string
+  folderId?: number
+  folderName?: string
   uploadedAt: string
+}
+
+export interface FolderResponse {
+  id: number
+  name: string
+  documentCount: number
+  createdAt: string
+}
+
+export interface PermissionResponse {
+  id: number
+  userId: number
+  username: string
+  permissionType: string
+  grantedAt: string
 }
 
 export interface PageResponse<T> {
@@ -76,20 +93,41 @@ export const auth = {
     }) as Promise<AuthResponse>,
 }
 
+export const folders = {
+  list: () =>
+    request('/api/folders') as Promise<FolderResponse[]>,
+
+  create: (name: string) =>
+    request('/api/folders', {
+      method: 'POST',
+      body: JSON.stringify({ name }),
+    }) as Promise<FolderResponse>,
+
+  rename: (id: number, name: string) =>
+    request(`/api/folders/${id}`, {
+      method: 'PUT',
+      body: JSON.stringify({ name }),
+    }) as Promise<FolderResponse>,
+
+  delete: (id: number) =>
+    request(`/api/folders/${id}`, { method: 'DELETE' }) as Promise<void>,
+}
+
 export const documents = {
-  list: (page = 0, size = 20) =>
+  list: (page = 0, size = 50) =>
     request(`/api/documents?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
 
-  search: (q: string, page = 0, size = 20) =>
+  search: (q: string, page = 0, size = 50) =>
     request(`/api/documents/search?q=${encodeURIComponent(q)}&page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
 
-  shared: (page = 0, size = 20) =>
+  shared: (page = 0, size = 50) =>
     request(`/api/documents/shared?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
 
-  upload: (file: File, description: string) => {
+  upload: (file: File, description: string, folderId?: number) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('description', description)
+    if (folderId !== undefined) formData.append('folderId', String(folderId))
     const headers: Record<string, string> = {}
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
     return fetch(`${API_BASE}/api/documents/upload`, {
@@ -145,5 +183,19 @@ export const documents = {
       }
       return res.json() as Promise<DocumentResponse>
     })
+  },
+
+  permissions: {
+    list: (docId: number) =>
+      request(`/api/documents/${docId}/permissions`) as Promise<PermissionResponse[]>,
+
+    grant: (docId: number, username: string, permissionType: string) =>
+      request(`/api/documents/${docId}/permissions`, {
+        method: 'POST',
+        body: JSON.stringify({ username, permissionType }),
+      }) as Promise<PermissionResponse>,
+
+    revoke: (docId: number, userId: number) =>
+      request(`/api/documents/${docId}/permissions/${userId}`, { method: 'DELETE' }) as Promise<void>,
   },
 }

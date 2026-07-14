@@ -5,8 +5,10 @@ import dev.securecdms.exception.AccessDeniedException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.model.Document;
 import dev.securecdms.model.DocumentPermission;
+import dev.securecdms.model.Folder;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
+import dev.securecdms.repository.FolderRepository;
 import dev.securecdms.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,13 +30,23 @@ public class DocumentService {
 
     private final DocumentRepository documentRepository;
     private final UserRepository userRepository;
+    private final FolderRepository folderRepository;
     private final StorageService storageService;
     private final AuditService auditService;
 
     @Transactional
-    public DocumentResponse upload(MultipartFile file, String description, String username) throws IOException {
+    public DocumentResponse upload(MultipartFile file, String description, Long folderId, String username) throws IOException {
         validateFileType(file);
         User owner = getUser(username);
+
+        Folder folder = null;
+        if (folderId != null) {
+            folder = folderRepository.findById(folderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Folder not found: " + folderId));
+            if (!folder.getOwner().getId().equals(owner.getId())) {
+                throw new AccessDeniedException("Access denied to folder");
+            }
+        }
 
         String storedFilename = storageService.store(file);
 
@@ -45,6 +57,7 @@ public class DocumentService {
                 .fileSize(file.getSize())
                 .description(description)
                 .owner(owner)
+                .folder(folder)
                 .build();
 
         documentRepository.save(doc);
@@ -138,17 +151,23 @@ public class DocumentService {
         User user = getUser(username);
 
         boolean isOwner = doc.getOwner().getId().equals(user.getId());
-        if (!isOwner && !hasPermission(doc, user, DocumentPermission.PermissionType.DELETE)) {
-            throw new AccessDeniedException("Only the owner or a user with DELETE permission can delete this document");
+
+        if (isOwner) {
+            storageService.delete(doc.getStoredFilename());
+            documentRepository.delete(doc);
+            auditService.log("DELETE", user.getId(), documentId,
+                    "Deleted: " + doc.getOriginalFilename(), null);
+            log.info("Document deleted: {} by {}", doc.getOriginalFilename(), username);
+        } else {
+            boolean hadPermission = doc.getPermissions().removeIf(p -> p.getUser().getId().equals(user.getId()));
+            if (!hadPermission) {
+                throw new AccessDeniedException("Access denied to document " + documentId);
+            }
+            documentRepository.save(doc);
+            auditService.log("UNSHARE", user.getId(), documentId,
+                    "Removed own access to: " + doc.getOriginalFilename(), null);
+            log.info("User {} removed own access to document {}", username, documentId);
         }
-
-        storageService.delete(doc.getStoredFilename());
-        documentRepository.delete(doc);
-
-        auditService.log("DELETE", user.getId(), documentId,
-                "Deleted: " + doc.getOriginalFilename(), null);
-
-        log.info("Document deleted: {} by {}", doc.getOriginalFilename(), username);
     }
 
     // ---- Helpers ----
@@ -192,14 +211,18 @@ public class DocumentService {
     }
 
     private DocumentResponse toResponse(Document doc) {
-        return DocumentResponse.builder()
+        DocumentResponse.DocumentResponseBuilder builder = DocumentResponse.builder()
                 .id(doc.getId())
                 .originalFilename(doc.getOriginalFilename())
                 .contentType(doc.getContentType())
                 .fileSize(doc.getFileSize())
                 .description(doc.getDescription())
                 .ownerUsername(doc.getOwner().getUsername())
-                .uploadedAt(doc.getUploadedAt())
-                .build();
+                .uploadedAt(doc.getUploadedAt());
+        if (doc.getFolder() != null) {
+            builder.folderId(doc.getFolder().getId());
+            builder.folderName(doc.getFolder().getName());
+        }
+        return builder.build();
     }
 }

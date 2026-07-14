@@ -7,6 +7,7 @@ import dev.securecdms.model.DocumentPermission;
 import dev.securecdms.model.Role;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
+import dev.securecdms.repository.FolderRepository;
 import dev.securecdms.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +35,7 @@ class DocumentServiceTest {
 
     @Mock private DocumentRepository documentRepository;
     @Mock private UserRepository userRepository;
+    @Mock private FolderRepository folderRepository;
     @Mock private StorageService storageService;
     @Mock private AuditService auditService;
 
@@ -44,7 +46,7 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, userRepository, storageService, auditService);
+        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService);
 
         owner = User.builder().id(1L).username("owner").role(Role.ROLE_USER).build();
         otherUser = User.builder().id(2L).username("other").role(Role.ROLE_USER).build();
@@ -69,7 +71,7 @@ class DocumentServiceTest {
         when(storageService.store(any())).thenReturn("stored-uuid.pdf");
         when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        var response = documentService.upload(file, "Q2 report", "owner");
+        var response = documentService.upload(file, "Q2 report", null, "owner");
 
         assertEquals("report.pdf", response.getOriginalFilename());
         assertEquals("Q2 report", response.getDescription());
@@ -83,7 +85,7 @@ class DocumentServiceTest {
     void upload_shouldRejectUnsupportedFileType() {
         MultipartFile file = new MockMultipartFile("file", "script.exe", "application/x-msdownload", "blah".getBytes());
 
-        assertThrows(IllegalArgumentException.class, () -> documentService.upload(file, null, "owner"));
+        assertThrows(IllegalArgumentException.class, () -> documentService.upload(file, null, null, "owner"));
     }
 
     @Test
@@ -147,20 +149,25 @@ class DocumentServiceTest {
     }
 
     @Test
-    void delete_shouldAllowUserWithDeletePermission() throws IOException {
+    void delete_shouldRemovePermissionForNonOwner() throws IOException {
         DocumentPermission perm = DocumentPermission.builder()
-                .user(otherUser).permissionType(DocumentPermission.PermissionType.DELETE).build();
+                .user(otherUser).permissionType(DocumentPermission.PermissionType.READ).build();
         document.getPermissions().add(perm);
 
         when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
-        assertDoesNotThrow(() -> documentService.delete(1L, "other"));
-        verify(storageService).delete("uuid-test.pdf");
+        documentService.delete(1L, "other");
+
+        assertTrue(document.getPermissions().isEmpty());
+        verify(documentRepository).save(document);
+        verify(auditService).log(eq("UNSHARE"), eq(2L), eq(1L), any(), eq(null));
+        verify(storageService, never()).delete(any());
+        verify(documentRepository, never()).delete(any());
     }
 
     @Test
-    void delete_shouldDenyUserWithoutDeletePermission() {
+    void delete_shouldThrowWhenNonOwnerHasNoPermission() {
         when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 

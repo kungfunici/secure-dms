@@ -1,5 +1,7 @@
 package dev.securecdms.service;
 
+import dev.securecdms.dto.request.ShareRequest;
+import dev.securecdms.dto.response.PermissionResponse;
 import dev.securecdms.exception.AccessDeniedException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.model.Document;
@@ -9,7 +11,6 @@ import dev.securecdms.repository.DocumentRepository;
 import dev.securecdms.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -25,87 +26,79 @@ public class PermissionService {
     private final AuditService auditService;
 
     @Transactional
-    public void grantPermission(Long documentId, String ownerUsername,
-                                String targetUsername, DocumentPermission.PermissionType type) {
-
+    public PermissionResponse grant(Long documentId, ShareRequest request, String ownerUsername) {
         Document doc = getDocument(documentId);
         User owner = getUser(ownerUsername);
-        User target = getUser(targetUsername);
 
         if (!doc.getOwner().getId().equals(owner.getId())) {
-            throw new AccessDeniedException("Only the owner can grant permissions");
+            throw new AccessDeniedException("Only the owner can share this document");
         }
 
-        if (owner.getId().equals(target.getId())) {
-            throw new IllegalArgumentException("Owner cannot grant permissions to themselves");
+        User targetUser = userRepository.findByUsername(request.getUsername())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + request.getUsername()));
+
+        if (targetUser.getId().equals(owner.getId())) {
+            throw new IllegalArgumentException("Cannot share document with yourself");
         }
 
-        doc.getPermissions().stream()
-                .filter(p -> p.getUser().getId().equals(target.getId()))
-                .findFirst()
-                .ifPresentOrElse(
-                        p -> p.setPermissionType(type),
-                        () -> doc.getPermissions().add(
-                                DocumentPermission.builder()
-                                        .document(doc)
-                                        .user(target)
-                                        .permissionType(type)
-                                        .build()
-                        )
-                );
+        DocumentPermission.PermissionType type = DocumentPermission.PermissionType.valueOf(request.getPermissionType());
 
+        boolean alreadyExists = doc.getPermissions().stream()
+                .anyMatch(p -> p.getUser().getId().equals(targetUser.getId())
+                            && p.getPermissionType() == type);
+        if (alreadyExists) {
+            throw new IllegalArgumentException("User already has this permission");
+        }
+
+        DocumentPermission perm = DocumentPermission.builder()
+                .document(doc)
+                .user(targetUser)
+                .permissionType(type)
+                .build();
+
+        doc.getPermissions().add(perm);
         documentRepository.save(doc);
-        log.info("Permission {} granted to {} on document {}", type, targetUsername, documentId);
 
-        auditService.log("PERMISSION_GRANT", owner.getId(), documentId,
-                type + " for " + targetUsername, null);
+        auditService.log("SHARE", owner.getId(), documentId,
+                "Shared " + type + " access with " + targetUser.getUsername(), null);
+
+        log.info("Shared {} access to document {} with user {}", type, documentId, targetUser.getUsername());
+        return toResponse(perm);
     }
 
     @Transactional
-    public void revokePermission(Long documentId, String ownerUsername, String targetUsername) {
+    public void revoke(Long documentId, Long userId, String ownerUsername) {
         Document doc = getDocument(documentId);
         User owner = getUser(ownerUsername);
-        User target = getUser(targetUsername);
 
         if (!doc.getOwner().getId().equals(owner.getId())) {
             throw new AccessDeniedException("Only the owner can revoke permissions");
         }
 
-        boolean removed = doc.getPermissions()
-                .removeIf(p -> p.getUser().getId().equals(target.getId()));
-
+        boolean removed = doc.getPermissions().removeIf(p -> p.getUser().getId().equals(userId));
         if (!removed) {
-            throw new ResourceNotFoundException("No permission found for " + targetUsername);
+            throw new ResourceNotFoundException("No permission found for user " + userId);
         }
-
         documentRepository.save(doc);
-        log.info("Permission revoked for {} on document {}", targetUsername, documentId);
 
-        auditService.log("PERMISSION_REVOKE", owner.getId(), documentId,
-                "Revoked for " + targetUsername, null);
+        auditService.log("REVOKE", owner.getId(), documentId,
+                "Revoked access from user " + userId, null);
     }
 
     @Transactional(readOnly = true)
-    public List<PermissionInfo> listPermissions(Long documentId, String ownerUsername) {
+    public List<PermissionResponse> list(Long documentId, String username) {
         Document doc = getDocument(documentId);
-        User owner = getUser(ownerUsername);
+        User user = getUser(username);
 
-        if (!doc.getOwner().getId().equals(owner.getId())) {
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        if (!isOwner) {
             throw new AccessDeniedException("Only the owner can view permissions");
         }
 
         return doc.getPermissions().stream()
-                .map(p -> new PermissionInfo(
-                        p.getUser().getUsername(),
-                        p.getPermissionType(),
-                        p.getGrantedAt()))
+                .map(this::toResponse)
                 .toList();
     }
-
-    public record PermissionInfo(
-            String username,
-            DocumentPermission.PermissionType permissionType,
-            java.time.Instant grantedAt) {}
 
     private Document getDocument(Long id) {
         return documentRepository.findById(id)
@@ -114,6 +107,16 @@ public class PermissionService {
 
     private User getUser(String username) {
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
+                .orElseThrow(() -> new org.springframework.security.core.userdetails.UsernameNotFoundException("User not found: " + username));
+    }
+
+    private PermissionResponse toResponse(DocumentPermission perm) {
+        return PermissionResponse.builder()
+                .id(perm.getId())
+                .userId(perm.getUser().getId())
+                .username(perm.getUser().getUsername())
+                .permissionType(perm.getPermissionType().name())
+                .grantedAt(perm.getGrantedAt())
+                .build();
     }
 }

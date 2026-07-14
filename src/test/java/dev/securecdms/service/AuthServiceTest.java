@@ -4,6 +4,7 @@ import dev.securecdms.dto.request.LoginRequest;
 import dev.securecdms.dto.request.RefreshTokenRequest;
 import dev.securecdms.dto.request.RegisterRequest;
 import dev.securecdms.dto.response.AuthResponse;
+import dev.securecdms.exception.EmailAlreadyExistsException;
 import dev.securecdms.exception.UsernameAlreadyExistsException;
 import dev.securecdms.model.Role;
 import dev.securecdms.model.User;
@@ -94,7 +95,7 @@ class AuthServiceTest {
         when(userRepository.existsByUsername("testuser")).thenReturn(false);
         when(userRepository.existsByEmail("used@example.com")).thenReturn(true);
 
-        assertThrows(UsernameAlreadyExistsException.class, () -> authService.register(request));
+        assertThrows(EmailAlreadyExistsException.class, () -> authService.register(request));
     }
 
     @Test

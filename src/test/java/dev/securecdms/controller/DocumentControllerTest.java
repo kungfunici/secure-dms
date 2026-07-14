@@ -46,7 +46,7 @@ class DocumentControllerTest {
     @Test
     @WithMockUser
     void upload_shouldReturnDocument() throws Exception {
-        when(documentService.upload(any(), any(), anyString())).thenReturn(docResponse);
+        when(documentService.upload(any(), any(), isNull(), anyString())).thenReturn(docResponse);
 
         MockMultipartFile file = new MockMultipartFile("file", "test.pdf", "application/pdf", "content".getBytes());
 

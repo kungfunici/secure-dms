@@ -1,5 +1,6 @@
 package dev.securecdms.service;
 
+import dev.securecdms.dto.request.ShareRequest;
 import dev.securecdms.exception.AccessDeniedException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.model.Document;
@@ -44,87 +45,73 @@ class PermissionServiceTest {
                 .id(1L).owner(owner).permissions(new ArrayList<>()).build();
     }
 
+    private ShareRequest shareReq(String username, String type) {
+        ShareRequest r = new ShareRequest();
+        r.setUsername(username);
+        r.setPermissionType(type);
+        return r;
+    }
+
     @Test
-    void grantPermission_shouldAddNewPermission() {
+    void grant_shouldAddNewPermission() {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
         when(userRepository.findByUsername("target")).thenReturn(Optional.of(targetUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
         when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        permissionService.grantPermission(1L, "owner", "target", DocumentPermission.PermissionType.READ);
+        permissionService.grant(1L, shareReq("target", "READ"), "owner");
 
         assertEquals(1, document.getPermissions().size());
         assertEquals(DocumentPermission.PermissionType.READ, document.getPermissions().getFirst().getPermissionType());
-        verify(auditService).log(eq("PERMISSION_GRANT"), eq(1L), eq(1L), any(), eq(null));
+        verify(auditService).log(eq("SHARE"), eq(1L), eq(1L), any(), eq(null));
     }
 
     @Test
-    void grantPermission_shouldUpdateExistingPermission() {
-        DocumentPermission existing = DocumentPermission.builder()
-                .document(document).user(targetUser).permissionType(DocumentPermission.PermissionType.READ).build();
-        document.getPermissions().add(existing);
-
-        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(userRepository.findByUsername("target")).thenReturn(Optional.of(targetUser));
-        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
-        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
-
-        permissionService.grantPermission(1L, "owner", "target", DocumentPermission.PermissionType.WRITE);
-
-        assertEquals(1, document.getPermissions().size());
-        assertEquals(DocumentPermission.PermissionType.WRITE, document.getPermissions().getFirst().getPermissionType());
-    }
-
-    @Test
-    void grantPermission_shouldDenyNonOwner() {
+    void grant_shouldDenyNonOwner() {
         User stranger = User.builder().id(3L).username("stranger").build();
         when(userRepository.findByUsername("stranger")).thenReturn(Optional.of(stranger));
-        when(userRepository.findByUsername("target")).thenReturn(Optional.of(targetUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(AccessDeniedException.class,
-                () -> permissionService.grantPermission(1L, "stranger", "target", DocumentPermission.PermissionType.READ));
+                () -> permissionService.grant(1L, shareReq("target", "READ"), "stranger"));
     }
 
     @Test
-    void grantPermission_shouldDenySelfGrant() {
-        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+    void grant_shouldDenySelfGrant() {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(IllegalArgumentException.class,
-                () -> permissionService.grantPermission(1L, "owner", "owner", DocumentPermission.PermissionType.READ));
+                () -> permissionService.grant(1L, shareReq("owner", "READ"), "owner"));
     }
 
     @Test
-    void revokePermission_shouldRemovePermission() {
+    void revoke_shouldRemovePermission() {
         DocumentPermission existing = DocumentPermission.builder()
                 .document(document).user(targetUser).permissionType(DocumentPermission.PermissionType.READ).build();
         document.getPermissions().add(existing);
 
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(userRepository.findByUsername("target")).thenReturn(Optional.of(targetUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
         when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        permissionService.revokePermission(1L, "owner", "target");
+        permissionService.revoke(1L, 2L, "owner");
 
         assertTrue(document.getPermissions().isEmpty());
-        verify(auditService).log(eq("PERMISSION_REVOKE"), eq(1L), eq(1L), any(), eq(null));
+        verify(auditService).log(eq("REVOKE"), eq(1L), eq(1L), any(), eq(null));
     }
 
     @Test
-    void revokePermission_shouldThrowWhenNoPermission() {
+    void revoke_shouldThrowWhenNoPermission() {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(userRepository.findByUsername("target")).thenReturn(Optional.of(targetUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(ResourceNotFoundException.class,
-                () -> permissionService.revokePermission(1L, "owner", "target"));
+                () -> permissionService.revoke(1L, 2L, "owner"));
     }
 
     @Test
-    void listPermissions_shouldReturnPermissions() {
+    void list_shouldReturnPermissions() {
         DocumentPermission existing = DocumentPermission.builder()
                 .document(document).user(targetUser).permissionType(DocumentPermission.PermissionType.READ).build();
         document.getPermissions().add(existing);
@@ -132,19 +119,19 @@ class PermissionServiceTest {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
-        var permissions = permissionService.listPermissions(1L, "owner");
+        var permissions = permissionService.list(1L, "owner");
 
         assertEquals(1, permissions.size());
-        assertEquals("target", permissions.getFirst().username());
+        assertEquals("target", permissions.getFirst().getUsername());
     }
 
     @Test
-    void listPermissions_shouldDenyNonOwner() {
+    void list_shouldDenyNonOwner() {
         when(userRepository.findByUsername("stranger")).thenReturn(Optional.of(
                 User.builder().id(3L).username("stranger").build()));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(AccessDeniedException.class,
-                () -> permissionService.listPermissions(1L, "stranger"));
+                () -> permissionService.list(1L, "stranger"));
     }
 }
