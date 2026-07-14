@@ -34,7 +34,7 @@ public class UserService {
     }
 
     @Transactional
-    public UserResponse updateProfile(Long userId, String username, MultipartFile avatar) throws IOException {
+    public UserResponse updateProfile(Long userId, String username, MultipartFile avatar, Integer versionRetentionDays) throws IOException {
         User user = findUser(userId);
 
         if (!user.getUsername().equals(username)) {
@@ -49,6 +49,10 @@ public class UserService {
             String filename = "profile-" + userId + "-" + UUID.randomUUID() + (ext.isEmpty() ? "" : "." + ext);
             storageService.storeWithName(avatar, filename);
             user.setProfilePicture(filename);
+        }
+
+        if (versionRetentionDays != null) {
+            user.setVersionRetentionDays(versionRetentionDays);
         }
 
         userRepository.save(user);
@@ -117,6 +121,7 @@ public class UserService {
                 .username(user.getUsername())
                 .email(user.getEmail())
                 .profilePicture(user.getProfilePicture())
+                .versionRetentionDays(user.getVersionRetentionDays())
                 .createdAt(user.getCreatedAt())
                 .build();
     }

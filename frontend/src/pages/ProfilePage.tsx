@@ -4,8 +4,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/contexts/AuthContext'
-import { users, type UserResponse } from '@/lib/api'
-import { ArrowLeft, Upload, Trash2, FileText } from 'lucide-react'
+import { auth, users, type UserResponse } from '@/lib/api'
+import { ArrowLeft, Upload, Trash2, FileText, Clock, Lock } from 'lucide-react'
 
 export default function ProfilePage() {
   const { user, logout } = useAuth()
@@ -15,6 +15,9 @@ export default function ProfilePage() {
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
   const [loading, setLoading] = useState(true)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
 
   useEffect(() => {
     if (!user) return
@@ -119,6 +122,74 @@ export default function ProfilePage() {
                 <Upload className="h-4 w-4 mr-2" /> Upload
               </Button>
             </form>
+
+            <hr className="border-border" />
+
+            <div>
+              <h3 className="font-medium mb-2 flex items-center gap-2"><Clock className="h-4 w-4" /> Version Retention</h3>
+              <p className="text-sm text-muted-foreground mb-3">
+                Old version snapshots are automatically deleted after this many days. Set to 0 to keep versions indefinitely.
+              </p>
+              <form onSubmit={async (e) => {
+                e.preventDefault()
+                setError('')
+                setSuccess('')
+                try {
+                  const updated = await users.updateProfile(user!.id, null, profile.versionRetentionDays)
+                  setProfile(updated)
+                  setSuccess('Retention setting saved')
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Failed to save setting')
+                }
+              }} className="flex items-end gap-3">
+                <div className="flex-1">
+                  <p className="text-sm font-medium mb-1">Retention period (days)</p>
+                  <Input
+                    type="number"
+                    min={0}
+                    max={3650}
+                    value={profile.versionRetentionDays}
+                    onChange={(e) => setProfile({ ...profile, versionRetentionDays: parseInt(e.target.value) || 0 })}
+                  />
+                </div>
+                <Button type="submit">
+                  <Clock className="h-4 w-4 mr-2" /> Save
+                </Button>
+              </form>
+            </div>
+
+            <hr className="border-border" />
+
+            <div>
+              <h3 className="font-medium mb-2 flex items-center gap-2"><Lock className="h-4 w-4" /> Change Password</h3>
+              <form onSubmit={async (e) => {
+                e.preventDefault()
+                setError('')
+                setSuccess('')
+                if (newPassword !== confirmPassword) { setError('Passwords do not match'); return }
+                try {
+                  await auth.changePassword(currentPassword, newPassword)
+                  setCurrentPassword(''); setNewPassword(''); setConfirmPassword('')
+                  setSuccess('Password changed')
+                } catch (err) {
+                  setError(err instanceof Error ? err.message : 'Failed to change password')
+                }
+              }} className="space-y-3">
+                <div>
+                  <p className="text-sm font-medium mb-1">Current password</p>
+                  <Input type="password" value={currentPassword} onChange={e => setCurrentPassword(e.target.value)} required />
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-1">New password</p>
+                  <Input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} required minLength={8} />
+                </div>
+                <div>
+                  <p className="text-sm font-medium mb-1">Confirm new password</p>
+                  <Input type="password" value={confirmPassword} onChange={e => setConfirmPassword(e.target.value)} required />
+                </div>
+                <Button type="submit"><Lock className="h-4 w-4 mr-2" /> Change Password</Button>
+              </form>
+            </div>
 
             <hr className="border-border" />
 

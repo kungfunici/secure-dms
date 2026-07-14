@@ -27,6 +27,16 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
         """)
     Page<Document> findTrashByOwner(@Param("owner") User owner, Pageable pageable);
 
+    @Query("""
+        SELECT d FROM Document d
+        WHERE d.owner = :owner AND d.deletedAt IS NOT NULL
+          AND (LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', :query, '%'))
+               OR LOWER(d.description) LIKE LOWER(CONCAT('%', :query, '%')))
+        """)
+    Page<Document> searchTrashByOwner(@Param("owner") User owner,
+                                      @Param("query") String query,
+                                      Pageable pageable);
+
     List<Document> findByOwnerAndFolder(User owner, Folder folder);
 
     List<Document> findByOwnerAndFolderIsNullAndDeletedAtIsNull(User owner);

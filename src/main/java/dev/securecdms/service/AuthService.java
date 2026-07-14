@@ -36,6 +36,8 @@ public class AuthService {
     private final JwtUtils jwtUtils;
     private final AuditService auditService;
 
+    private static final String FRONTEND_URL = "http://localhost:5173";
+
     private final Map<String, Long> passwordResetTokens = new ConcurrentHashMap<>();
 
     @Transactional
@@ -111,7 +113,8 @@ public class AuthService {
         String token = UUID.randomUUID().toString();
         passwordResetTokens.put(token, user.getId());
 
-        log.info("Password reset token for {}: {}", email, token);
+        String resetUrl = FRONTEND_URL + "/reset-password?token=" + token;
+        log.info("Password reset link for {}: {}", email, resetUrl);
     }
 
     @Transactional
@@ -128,6 +131,21 @@ public class AuthService {
         userRepository.save(user);
 
         log.info("Password reset for user: {}", user.getUsername());
+    }
+
+    @Transactional
+    public void changePassword(String username, String currentPassword, String newPassword) {
+        User user = userRepository.findByUsername(username)
+                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
+
+        if (!passwordEncoder.matches(currentPassword, user.getPasswordHash())) {
+            throw new IllegalArgumentException("Current password is incorrect");
+        }
+
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        userRepository.save(user);
+
+        log.info("Password changed for user: {}", user.getUsername());
     }
 
     private AuthResponse buildAuthResponse(String username, String password, User user) {

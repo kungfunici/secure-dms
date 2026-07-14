@@ -73,10 +73,11 @@ public class DocumentController {
 
     @GetMapping("/trash")
     public ResponseEntity<Page<DocumentResponse>> listTrash(
+            @RequestParam(value = "q", required = false) String query,
             @AuthenticationPrincipal UserDetails userDetails,
             Pageable pageable) {
 
-        return ResponseEntity.ok(documentService.listTrash(userDetails.getUsername(), pageable));
+        return ResponseEntity.ok(documentService.listTrash(userDetails.getUsername(), query, pageable));
     }
 
     @GetMapping("/recently-viewed")
@@ -231,6 +232,22 @@ public class DocumentController {
 
         documentService.batchMove(ids, folderId, userDetails.getUsername());
         return ResponseEntity.ok().build();
+    }
+
+    // ---- Favorites ----
+
+    @PostMapping("/{id}/favorite")
+    public ResponseEntity<Map<String, Boolean>> toggleFavorite(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        boolean isFavorite = documentService.toggleFavorite(id, userDetails.getUsername());
+        return ResponseEntity.ok(Map.of("favorite", isFavorite));
+    }
+
+    @GetMapping("/favorites")
+    public ResponseEntity<List<DocumentResponse>> listFavorites(
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(documentService.listFavorites(userDetails.getUsername()));
     }
 
     @PostMapping("/batch/download")

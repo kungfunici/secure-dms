@@ -8,10 +8,11 @@ import { useDarkMode } from '@/hooks/useDarkMode'
 import { folders, documents, users, notifications as notifApi, type DocumentResponse, type FolderResponse, type PermissionResponse, type UserResponse, type NotificationResponse, type VersionResponse } from '@/lib/api'
 import {
   FileText, LogOut, Search, Upload, Download, Trash2, FolderPlus, Folder, Share2, X, UserPlus, MoveRight,
-  Moon, Sun, Bell, RotateCcw, Clock, FileInput, Archive, Eye, History, CheckSquare, Square, DownloadCloud, Pencil
+  Moon, Sun, Bell, RotateCcw, Clock, FileInput, Archive, Eye, History, CheckSquare, Square, DownloadCloud, Pencil,
+  Star, List, Grid3X3
 } from 'lucide-react'
 
-type DocTab = 'mine' | 'shared-with-me' | 'shared-by-me' | 'trash'
+type DocTab = 'mine' | 'shared-with-me' | 'shared-by-me' | 'trash' | 'favorites'
 type UploadMode = 'normal' | 'drop'
 
 const DOC_TYPES = ['', 'PDF', 'Word', 'Excel', 'PowerPoint', 'Image', 'Text', 'CSV', 'Other'] as const
@@ -57,6 +58,7 @@ export default function Dashboard() {
 
   // Preview
   const [previewDoc, setPreviewDoc] = useState<DocumentResponse | null>(null)
+  const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null)
 
   // Versions
   const [versionDocId, setVersionDocId] = useState<number | null>(null)
@@ -71,9 +73,20 @@ export default function Dashboard() {
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
   const [batchMoveFolderId, setBatchMoveFolderId] = useState<number | null>(null)
 
+  // View mode + sorting
+  const [listView, setListView] = useState(true)
+  const [sortBy, setSortBy] = useState('uploadedAt')
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
+
   // ---- Loaders ----
   async function loadDocs() {
     try {
+      if (activeTab === 'favorites') {
+        const favs = await documents.listFavorites()
+        setDocs(favs)
+        setSelectedIds(new Set())
+        return
+      }
       if (searchQuery) {
         const res = await documents.search(searchQuery)
         setDocs(res.content)
@@ -81,13 +94,14 @@ export default function Dashboard() {
         return
       }
       if (activeTab === 'trash') {
-        const res = await documents.trash()
+        const res = await documents.trash(0, 50, searchQuery || undefined)
         setDocs(res.content)
         setSelectedIds(new Set())
         return
       }
       if (activeTab === 'mine') {
-        const res = await documents.list()
+        const sort = sortDir === 'desc' ? `${sortBy},desc` : sortBy
+        const res = await documents.list(0, 50, sort)
         let all = res.content
         if (selectedFolder !== undefined) all = all.filter(d => d.folderId === selectedFolder)
         if (selectedDocType) all = all.filter(d => d.documentType === selectedDocType)
@@ -122,7 +136,7 @@ export default function Dashboard() {
     } catch { /* ignore */ }
   }
 
-  useEffect(() => { loadDocs(); loadFolders(); loadRecent(); loadNotifications() }, [activeTab, selectedFolder, selectedDocType])
+  useEffect(() => { loadDocs(); loadFolders(); loadRecent(); loadNotifications() }, [activeTab, selectedFolder, selectedDocType, sortBy, sortDir])
 
   // ---- Drag & Drop ----
   function onDragOver(e: DragEvent) { e.preventDefault(); setDragOver(true) }
@@ -134,8 +148,6 @@ export default function Dashboard() {
   }
 
   // ---- Actions ----
-  function handleSearch(e: React.FormEvent) { e.preventDefault(); loadDocs() }
-
   async function handleUpload(e: React.FormEvent) {
     e.preventDefault()
     if (!file) return
@@ -202,12 +214,31 @@ export default function Dashboard() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to revoke') }
   }
 
+  async function handleToggleFavorite(doc: DocumentResponse) {
+    try {
+      const { favorite } = await documents.toggleFavorite(doc.id)
+      if (activeTab === 'favorites' && !favorite) {
+        setDocs(prev => prev.filter(d => d.id !== doc.id))
+      } else {
+        setDocs(prev => prev.map(d => d.id === doc.id ? { ...d, favorite } : d))
+      }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed') }
+  }
+
   async function handleMarkNotifRead(id: number) {
     try { await notifApi.markRead(id); loadNotifications() } catch { /* ignore */ }
   }
 
   async function handleMarkAllRead() {
     try { await notifApi.markAllRead(); loadNotifications() } catch { /* ignore */ }
+  }
+
+  async function handleDeleteNotif(id: number) {
+    try { await notifApi.delete(id); loadNotifications() } catch { /* ignore */ }
+  }
+
+  async function handleClearAllNotifs() {
+    try { await notifApi.clearAll(); loadNotifications() } catch { /* ignore */ }
   }
 
   async function handleSearchUser(q: string) {
@@ -338,18 +369,27 @@ export default function Dashboard() {
                 <div className="absolute right-0 top-full mt-2 bg-popover border rounded-xl shadow-lg z-50 w-80 max-h-96 overflow-y-auto" onClick={e => e.stopPropagation()}>
                   <div className="flex items-center justify-between px-4 py-2 border-b sticky top-0 bg-popover">
                     <p className="text-sm font-medium">Notifications</p>
-                    {notifCount > 0 && (
-                      <button className="text-xs text-primary hover:underline" onClick={handleMarkAllRead}>Mark all read</button>
-                    )}
+                    <div className="flex items-center gap-2">
+                      {notifList.length > 0 && (
+                        <button className="text-xs text-muted-foreground hover:text-destructive" onClick={handleClearAllNotifs}>Clear all</button>
+                      )}
+                      {notifCount > 0 && (
+                        <button className="text-xs text-primary hover:underline" onClick={handleMarkAllRead}>Mark all read</button>
+                      )}
+                    </div>
                   </div>
                   {notifList.length === 0 ? (
                     <p className="text-sm text-muted-foreground text-center py-6">No notifications</p>
                   ) : (
                     notifList.map(n => (
-                      <div key={n.id} className={`px-4 py-3 border-b last:border-b-0 hover:bg-muted/50 transition-colors cursor-pointer ${!n.read ? 'bg-muted/20' : ''}`}
-                        onClick={() => { if (!n.read) handleMarkNotifRead(n.id) }}>
-                        <p className="text-sm font-medium">{n.title}</p>
-                        {n.message && <p className="text-xs text-muted-foreground">{n.message}</p>}
+                      <div key={n.id} className={`px-4 py-3 border-b last:border-b-0 flex items-start justify-between gap-2 ${!n.read ? 'bg-muted/20' : ''}`}>
+                        <div className="min-w-0 flex-1 cursor-pointer" onClick={() => { if (!n.read) handleMarkNotifRead(n.id) }}>
+                          <p className="text-sm font-medium">{n.title}</p>
+                          {n.message && <p className="text-xs text-muted-foreground">{n.message}</p>}
+                        </div>
+                        <Button variant="ghost" size="icon" className="h-6 w-6 shrink-0" onClick={() => handleDeleteNotif(n.id)} title="Delete">
+                          <X className="h-3 w-3" />
+                        </Button>
                       </div>
                     ))
                   )}
@@ -500,27 +540,48 @@ export default function Dashboard() {
         <Card>
           <CardHeader>
             <div className="flex items-center gap-1">
-              {(['mine', 'shared-with-me', 'shared-by-me', 'trash'] as DocTab[]).map(tab => (
+              {(['mine', 'shared-with-me', 'shared-by-me', 'favorites', 'trash'] as DocTab[]).map(tab => (
                 <button key={tab} className={tabClasses(tab)} onClick={() => setActiveTab(tab)}>
                   {tab === 'trash' && <Archive className="h-3.5 w-3.5 inline mr-1" />}
-                  {tab === 'mine' ? 'My Documents' : tab === 'shared-with-me' ? 'Shared with me' : tab === 'shared-by-me' ? 'Shared by me' : 'Trash'}
+                  {tab === 'favorites' && <Star className="h-3.5 w-3.5 inline mr-1" />}
+                  {tab === 'mine' ? 'My Documents' : tab === 'shared-with-me' ? 'Shared with me' : tab === 'shared-by-me' ? 'Shared by me' : tab === 'favorites' ? 'Favorites' : 'Trash'}
                 </button>
               ))}
             </div>
           </CardHeader>
           <CardContent className="space-y-4">
             {/* Search + type filter */}
-            {!isTrash && (
-              <form onSubmit={handleSearch} className="flex gap-2">
-                <div className="flex-1">
-                  <Input placeholder="Search documents and content..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+            <form onSubmit={(e) => { e.preventDefault(); loadDocs() }} className="flex gap-2">
+              <div className="flex-1">
+                <Input placeholder={isTrash ? 'Search trash...' : 'Search documents and content...'} value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} />
+              </div>
+              <Button type="submit" variant="secondary"><Search className="h-4 w-4 mr-2" /> Search</Button>
+              {activeTab === 'mine' && !isTrash && (
+                <div className="flex items-center gap-1 border-l border-border pl-2">
+                  <Button variant={listView ? 'secondary' : 'ghost'} size="icon" onClick={() => setListView(true)} title="List view">
+                    <List className="h-4 w-4" />
+                  </Button>
+                  <Button variant={!listView ? 'secondary' : 'ghost'} size="icon" onClick={() => setListView(false)} title="Grid view">
+                    <Grid3X3 className="h-4 w-4" />
+                  </Button>
                 </div>
-                <Button type="submit" variant="secondary"><Search className="h-4 w-4 mr-2" /> Search</Button>
-              </form>
-            )}
+              )}
+              {activeTab === 'mine' && !isTrash && (
+                <select className="h-9 rounded-md border border-input bg-background px-2 text-xs"
+                  value={`${sortBy},${sortDir}`}
+                  onChange={e => { const [by, dir] = e.target.value.split(','); setSortBy(by); setSortDir(dir as 'asc' | 'desc') }}>
+                  <option value="uploadedAt,desc">Newest</option>
+                  <option value="uploadedAt,asc">Oldest</option>
+                  <option value="originalFilename,asc">Name A-Z</option>
+                  <option value="originalFilename,desc">Name Z-A</option>
+                  <option value="fileSize,desc">Largest</option>
+                  <option value="fileSize,asc">Smallest</option>
+                </select>
+              )}
+            </form>
 
             {/* Type filter */}
-            {activeTab === 'mine' && !isTrash && (
+            {activeTab === 'mine' && (
               <div className="flex flex-wrap gap-1">
                 <button className={`px-2 py-1 text-xs rounded-full transition-colors ${!selectedDocType ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
                   onClick={() => { setSelectedDocType(''); loadDocs() }}>All</button>
@@ -557,9 +618,9 @@ export default function Dashboard() {
 
             {docs.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
-                {isTrash ? 'Trash is empty' : 'No documents found'}
+                {isTrash ? 'Trash is empty' : activeTab === 'favorites' ? 'No favorites yet' : 'No documents found'}
               </p>
-            ) : (
+            ) : listView ? (
               <div className="divide-y">
                 {docs.map((doc) => (
                   <div key={doc.id} className="py-3 flex items-center justify-between gap-4">
@@ -600,7 +661,19 @@ export default function Dashboard() {
                       </span>
 
                       {!isTrash && (
-                        <Button variant="ghost" size="icon" onClick={() => setPreviewDoc(doc)} title="Preview">
+                        <Button variant="ghost" size="icon" onClick={() => handleToggleFavorite(doc)}
+                          title={doc.favorite ? 'Remove from favorites' : 'Add to favorites'}>
+                          <Star className={`h-4 w-4 ${doc.favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                        </Button>
+                      )}
+                      {!isTrash && (
+                        <Button variant="ghost" size="icon" onClick={async () => {
+                          setPreviewDoc(doc); setPreviewBlobUrl(null)
+                          try {
+                            const url = await documents.getPreviewBlobUrl(doc.id, doc.contentType)
+                            setPreviewBlobUrl(url)
+                          } catch { setError('Failed to load preview') }
+                        }} title="Preview">
                           <Eye className="h-4 w-4" />
                         </Button>
                       )}
@@ -658,6 +731,63 @@ export default function Dashboard() {
                       {isTrash && (
                         <Button variant="ghost" size="icon" onClick={() => handleDelete(doc.id)} title="Delete permanently">
                           <Trash2 className="h-4 w-4 text-destructive" />
+                        </Button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+                {docs.map((doc) => (
+                  <div key={doc.id} className="border rounded-lg p-3 hover:bg-muted/50 transition-colors">
+                    <div className="flex items-start justify-between mb-2">
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-medium truncate flex items-center gap-2">
+                          {doc.originalFilename}
+                          {doc.documentType && (
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${typeColors[doc.documentType] || typeColors['Other']}`}>
+                              {doc.documentType}
+                            </span>
+                          )}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {(doc.fileSize / 1024).toFixed(1)} KB
+                          {!isOwner(doc) && <span> &middot; {doc.ownerUsername}</span>}
+                        </p>
+                      </div>
+                      {!isTrash && (
+                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleToggleFavorite(doc)}
+                          title={doc.favorite ? 'Remove from favorites' : 'Add to favorites'}>
+                          <Star className={`h-3.5 w-3.5 ${doc.favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />
+                        </Button>
+                      )}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      {!isTrash && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Preview" onClick={async () => {
+                          setPreviewDoc(doc); setPreviewBlobUrl(null)
+                          try { setPreviewBlobUrl(await documents.getPreviewBlobUrl(doc.id, doc.contentType)) }
+                          catch { setError('Failed to load preview') }
+                        }}>
+                          <Eye className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      <Button variant="ghost" size="icon" className="h-7 w-7" title="Download" onClick={() => handleDownload(doc.id)}>
+                        <Download className="h-3.5 w-3.5" />
+                      </Button>
+                      {isOwner(doc) && !isTrash && (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Share" onClick={() => openShareDialog(doc.id)}>
+                          <Share2 className="h-3.5 w-3.5" />
+                        </Button>
+                      )}
+                      {isTrash ? (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title="Restore" onClick={() => handleRestore(doc.id)}>
+                          <RotateCcw className="h-3.5 w-3.5" />
+                        </Button>
+                      ) : (
+                        <Button variant="ghost" size="icon" className="h-7 w-7" title={isOwner(doc) ? 'Move to trash' : 'Remove access'} onClick={() => handleDelete(doc.id)}>
+                          <Trash2 className="h-3.5 w-3.5" />
                         </Button>
                       )}
                     </div>
@@ -731,28 +861,45 @@ export default function Dashboard() {
 
       {/* Preview Dialog */}
       {previewDoc && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPreviewDoc(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl); setPreviewDoc(null) }}>
           <div className="bg-background rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
               <div>
                 <h3 className="font-semibold">{previewDoc.originalFilename}</h3>
-                <p className="text-xs text-muted-foreground">{(previewDoc.fileSize / 1024).toFixed(1)} KB</p>
+                <p className="text-xs text-muted-foreground">{(previewDoc.fileSize / 1024).toFixed(1)} KB &middot; {previewDoc.contentType}</p>
               </div>
               <div className="flex items-center gap-2">
                 <Button variant="outline" size="sm" onClick={() => handleDownload(previewDoc.id)}>
                   <Download className="h-4 w-4 mr-2" /> Download
                 </Button>
-                <Button variant="ghost" size="icon" onClick={() => setPreviewDoc(null)}><X className="h-4 w-4" /></Button>
+                <Button variant="ghost" size="icon" onClick={() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl); setPreviewDoc(null) }}><X className="h-4 w-4" /></Button>
               </div>
             </div>
             <div className="flex-1 overflow-auto p-6 bg-muted/20 flex items-start justify-center">
-              {previewDoc.contentType.startsWith('image/') ? (
-                <img src={documents.previewUrl(previewDoc.id)} alt={previewDoc.originalFilename}
+              {!previewBlobUrl && !previewDoc.contentType.startsWith('image/') && previewDoc.contentType !== 'application/pdf' && !previewDoc.contentType.startsWith('text/') ? (
+                <div className="text-center py-12">
+                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+                  <p className="text-sm text-muted-foreground">
+                    {previewDoc.contentType.includes('officedocument') || previewDoc.contentType.includes('opendocument') || previewDoc.contentType === 'application/msword' || previewDoc.contentType === 'application/vnd.ms-excel' || previewDoc.contentType === 'application/vnd.ms-powerpoint' || previewDoc.contentType === 'application/rtf'
+                      ? 'Office documents cannot be previewed in the browser'
+                      : 'Preview not available for this file type'}
+                  </p>
+                  <Button variant="outline" size="sm" className="mt-3" onClick={() => handleDownload(previewDoc.id)}>
+                    <Download className="h-4 w-4 mr-2" /> Download to view
+                  </Button>
+                </div>
+              ) : !previewBlobUrl ? (
+                <div className="text-center py-12">
+                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
+                  <p className="text-sm text-muted-foreground">Loading preview...</p>
+                </div>
+              ) : previewDoc.contentType.startsWith('image/') ? (
+                <img src={previewBlobUrl} alt={previewDoc.originalFilename}
                   className="max-w-full max-h-[70vh] rounded-lg shadow" />
               ) : previewDoc.contentType === 'application/pdf' ? (
-                <embed src={documents.previewUrl(previewDoc.id)} type="application/pdf" className="w-full h-[70vh] rounded-lg" />
+                <embed src={previewBlobUrl} type="application/pdf" className="w-full h-[70vh] rounded-lg" />
               ) : previewDoc.contentType.startsWith('text/') ? (
-                <iframe src={documents.previewUrl(previewDoc.id)} className="w-full h-[70vh] rounded-lg bg-white" title="Preview" />
+                <iframe src={previewBlobUrl} className="w-full h-[70vh] rounded-lg bg-white" title="Preview" />
               ) : (
                 <div className="text-center py-12">
                   <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />

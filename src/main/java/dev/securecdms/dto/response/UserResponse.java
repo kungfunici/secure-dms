@@ -12,5 +12,6 @@ public class UserResponse {
     private String username;
     private String email;
     private String profilePicture;
+    private int versionRetentionDays;
     private Instant createdAt;
 }

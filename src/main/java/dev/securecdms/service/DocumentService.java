@@ -7,11 +7,13 @@ import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.model.Document;
 import dev.securecdms.model.DocumentPermission;
 import dev.securecdms.model.DocumentVersion;
+import dev.securecdms.model.Favorite;
 import dev.securecdms.model.Folder;
 import dev.securecdms.model.RecentlyViewed;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
 import dev.securecdms.repository.DocumentVersionRepository;
+import dev.securecdms.repository.FavoriteRepository;
 import dev.securecdms.repository.FolderRepository;
 import dev.securecdms.repository.RecentlyViewedRepository;
 import dev.securecdms.repository.UserRepository;
@@ -32,6 +34,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
@@ -48,6 +51,7 @@ public class DocumentService {
     private final RecentlyViewedRepository recentlyViewedRepository;
     private final DocumentVersionRepository documentVersionRepository;
     private final TextExtractionService textExtractionService;
+    private final FavoriteRepository favoriteRepository;
 
     private static final Map<String, String> MIME_TO_DOC_TYPE = Map.ofEntries(
             Map.entry("application/pdf", "PDF"),
@@ -57,11 +61,23 @@ public class DocumentService {
             Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Excel"),
             Map.entry("application/vnd.ms-powerpoint", "PowerPoint"),
             Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", "PowerPoint"),
+            Map.entry("application/vnd.oasis.opendocument.text", "Text"),
+            Map.entry("application/vnd.oasis.opendocument.spreadsheet", "Spreadsheet"),
+            Map.entry("application/vnd.oasis.opendocument.presentation", "Presentation"),
+            Map.entry("application/rtf", "Text"),
             Map.entry("text/plain", "Text"),
             Map.entry("text/csv", "CSV"),
+            Map.entry("text/markdown", "Text"),
+            Map.entry("text/html", "Text"),
+            Map.entry("text/xml", "Text"),
+            Map.entry("application/json", "Text"),
+            Map.entry("application/xml", "Text"),
             Map.entry("image/png", "Image"),
             Map.entry("image/jpeg", "Image"),
-            Map.entry("image/gif", "Image")
+            Map.entry("image/gif", "Image"),
+            Map.entry("image/webp", "Image"),
+            Map.entry("image/svg+xml", "Image"),
+            Map.entry("image/bmp", "Image")
     );
 
     @Transactional
@@ -201,7 +217,7 @@ public class DocumentService {
 
         storageService.delete(doc.getStoredFilename());
 
-        String restoredFilename = "restored-" + version.getVersionNumber() + "-" + version.getStoredFilename();
+        String restoredFilename = UUID.randomUUID() + "." + getExtension(version.getStoredFilename());
         storageService.copy(version.getStoredFilename(), restoredFilename);
         doc.setStoredFilename(restoredFilename);
         doc.setFileSize(version.getFileSize());
@@ -397,8 +413,11 @@ public class DocumentService {
     }
 
     @Transactional(readOnly = true)
-    public Page<DocumentResponse> listTrash(String username, Pageable pageable) {
+    public Page<DocumentResponse> listTrash(String username, String query, Pageable pageable) {
         User owner = getUser(username);
+        if (query != null && !query.isBlank()) {
+            return documentRepository.searchTrashByOwner(owner, query, pageable).map(d -> toResponse(d, owner));
+        }
         return documentRepository.findTrashByOwner(owner, pageable).map(d -> toResponse(d, owner));
     }
 
@@ -531,6 +550,32 @@ public class DocumentService {
         return toResponse(doc, user);
     }
 
+    // ---- Favorites ----
+
+    @Transactional
+    public boolean toggleFavorite(Long documentId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+        checkAccess(doc, user);
+
+        var existing = favoriteRepository.findByUserAndDocument(user, doc);
+        if (existing.isPresent()) {
+            favoriteRepository.delete(existing.get());
+            return false;
+        } else {
+            favoriteRepository.save(Favorite.builder().user(user).document(doc).build());
+            return true;
+        }
+    }
+
+    @Transactional(readOnly = true)
+    public List<DocumentResponse> listFavorites(String username) {
+        User user = getUser(username);
+        return favoriteRepository.findByUserOrderByCreatedAtDesc(user).stream()
+                .map(f -> toResponse(f.getDocument(), user))
+                .toList();
+    }
+
     // ---- Helpers ----
 
     private String extractText(String storedFilename) {
@@ -543,17 +588,42 @@ public class DocumentService {
         }
     }
 
-    private void saveVersion(Document doc, int versionNumber, String storedFilename, Long fileSize, String contentType, User uploadedBy) {
+    private void saveVersion(Document doc, int versionNumber, String storedFilename, Long fileSize, String contentType, User uploadedBy) throws IOException {
+        String versionFilename = "v" + versionNumber + "-" + storedFilename;
+        storageService.copy(storedFilename, versionFilename);
         DocumentVersion version = DocumentVersion.builder()
                 .document(doc)
                 .versionNumber(versionNumber)
-                .storedFilename(storedFilename)
+                .storedFilename(versionFilename)
                 .fileSize(fileSize)
                 .contentType(contentType)
                 .uploadedBy(uploadedBy)
                 .createdAt(Instant.now())
                 .build();
         documentVersionRepository.save(version);
+        cleanupOldVersions(doc);
+    }
+
+    private void cleanupOldVersions(Document doc) {
+        User owner = doc.getOwner();
+        int retentionDays = owner.getVersionRetentionDays();
+        if (retentionDays <= 0) return;
+
+        Instant cutoff = Instant.now().minusSeconds(retentionDays * 86400L);
+        List<DocumentVersion> oldVersions = documentVersionRepository.findByDocumentAndCreatedAtBefore(doc, cutoff);
+
+        for (DocumentVersion old : oldVersions) {
+            try {
+                storageService.delete(old.getStoredFilename());
+            } catch (IOException e) {
+                log.warn("Failed to delete version file: {}", old.getStoredFilename(), e);
+            }
+            documentVersionRepository.delete(old);
+        }
+
+        if (!oldVersions.isEmpty()) {
+            log.info("Cleaned up {} old version(s) for document {}", oldVersions.size(), doc.getId());
+        }
     }
 
     private void checkAccess(Document doc, User user) {
@@ -573,11 +643,23 @@ public class DocumentService {
             "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             "application/vnd.ms-powerpoint",
             "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "application/vnd.oasis.opendocument.text",
+            "application/vnd.oasis.opendocument.spreadsheet",
+            "application/vnd.oasis.opendocument.presentation",
+            "application/rtf",
             "text/plain",
             "text/csv",
+            "text/markdown",
+            "text/html",
+            "text/xml",
+            "application/json",
+            "application/xml",
             "image/png",
             "image/jpeg",
-            "image/gif"
+            "image/gif",
+            "image/webp",
+            "image/svg+xml",
+            "image/bmp"
     );
 
     private void validateFileType(MultipartFile file) {
@@ -592,6 +674,11 @@ public class DocumentService {
         if (hasPermission(doc, user, DocumentPermission.PermissionType.WRITE)) return "WRITE";
         if (hasPermission(doc, user, DocumentPermission.PermissionType.READ)) return "READ";
         return null;
+    }
+
+    private String getExtension(String filename) {
+        if (filename == null || !filename.contains(".")) return "bin";
+        return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();
     }
 
     private boolean hasPermission(Document doc, User user, DocumentPermission.PermissionType type) {
@@ -612,6 +699,7 @@ public class DocumentService {
 
     private DocumentResponse toResponse(Document doc, User user) {
         int versionCount = documentVersionRepository.countByDocument(doc);
+        boolean isFavorite = favoriteRepository.existsByUserAndDocument(user, doc);
         DocumentResponse.DocumentResponseBuilder builder = DocumentResponse.builder()
                 .id(doc.getId())
                 .originalFilename(doc.getOriginalFilename())
@@ -624,7 +712,8 @@ public class DocumentService {
                 .permission(resolvePermission(doc, user))
                 .uploadedAt(doc.getUploadedAt())
                 .currentVersion(doc.getCurrentVersion())
-                .versionCount(versionCount);
+                .versionCount(versionCount)
+                .favorite(isFavorite);
         if (doc.getFolder() != null) {
             builder.folderId(doc.getFolder().getId());
             builder.folderName(doc.getFolder().getName());

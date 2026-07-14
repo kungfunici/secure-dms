@@ -20,6 +20,7 @@ public class DocumentResponse {
     private String folderName;
     private Instant deletedAt;
     private Instant uploadedAt;
-    private Integer currentVersion;
-    private Integer versionCount;
+    private int currentVersion;
+    private int versionCount;
+    private boolean favorite;
 }

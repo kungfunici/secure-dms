@@ -66,7 +66,7 @@ class UserServiceTest {
         when(storageService.storeWithName(any(), anyString())).thenReturn("profile-1-test.jpg");
         when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        var result = userService.updateProfile(1L, "testuser", avatar);
+        var result = userService.updateProfile(1L, "testuser", avatar, null);
 
         assertNotNull(result.getProfilePicture());
         verify(storageService).storeWithName(any(), anyString());
@@ -81,16 +81,26 @@ class UserServiceTest {
         when(storageService.storeWithName(any(), anyString())).thenReturn("profile-1-new.jpg");
         when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        userService.updateProfile(1L, "testuser", avatar);
+        userService.updateProfile(1L, "testuser", avatar, null);
 
         verify(storageService).delete("old-avatar.jpg");
+    }
+
+    @Test
+    void updateProfile_shouldSetVersionRetentionDays() throws IOException {
+        when(userRepository.findById(1L)).thenReturn(Optional.of(user));
+        when(userRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var result = userService.updateProfile(1L, "testuser", null, 60);
+
+        assertEquals(60, result.getVersionRetentionDays());
     }
 
     @Test
     void updateProfile_shouldDenyOtherUser() {
         when(userRepository.findById(1L)).thenReturn(Optional.of(user));
 
-        assertThrows(AccessDeniedException.class, () -> userService.updateProfile(1L, "other", null));
+        assertThrows(AccessDeniedException.class, () -> userService.updateProfile(1L, "other", null, null));
     }
 
     @Test

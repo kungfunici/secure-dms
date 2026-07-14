@@ -1,15 +1,18 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { useAuth } from '@/contexts/AuthContext'
-import { FileText } from 'lucide-react'
+import { useDarkMode } from '@/hooks/useDarkMode'
+import { FileText, Moon, Sun } from 'lucide-react'
 
 type Mode = 'login' | 'register'
 
 export default function LoginPage() {
   const { login, register } = useAuth()
+  const [dark, toggleDark] = useDarkMode()
   const [mode, setMode] = useState<Mode>('login')
   const [username, setUsername] = useState('')
   const [email, setEmail] = useState('')
@@ -36,7 +39,12 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center bg-muted/30 p-4">
-      <Card className="w-full max-w-md">
+      <Card className="w-full max-w-md relative">
+        <div className="absolute top-3 right-3">
+          <Button variant="ghost" size="icon" onClick={toggleDark} title={dark ? 'Light mode' : 'Dark mode'}>
+            {dark ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+          </Button>
+        </div>
         <CardHeader className="text-center">
           <div className="flex justify-center mb-2">
             <FileText className="h-10 w-10 text-primary" />
@@ -83,6 +91,13 @@ export default function LoginPage() {
             <Button type="submit" className="w-full" disabled={loading}>
               {loading ? 'Please wait...' : mode === 'login' ? 'Sign In' : 'Create Account'}
             </Button>
+            {mode === 'login' && (
+              <div className="text-center text-sm">
+                <Link to="/forgot-password" className="text-muted-foreground underline-offset-4 hover:underline hover:text-foreground">
+                  Forgot password?
+                </Link>
+              </div>
+            )}
           </form>
           <div className="mt-4 text-center text-sm text-muted-foreground">
             {mode === 'login' ? (

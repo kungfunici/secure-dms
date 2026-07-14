@@ -47,9 +47,10 @@ public class UserController {
     public ResponseEntity<UserResponse> updateProfile(
             @PathVariable Long id,
             @RequestParam(value = "avatar", required = false) MultipartFile avatar,
+            @RequestParam(value = "versionRetentionDays", required = false) Integer versionRetentionDays,
             @AuthenticationPrincipal UserDetails userDetails) throws IOException {
 
-        UserResponse response = userService.updateProfile(id, userDetails.getUsername(), avatar);
+        UserResponse response = userService.updateProfile(id, userDetails.getUsername(), avatar, versionRetentionDays);
         return ResponseEntity.ok(response);
     }
 

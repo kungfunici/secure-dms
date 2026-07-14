@@ -43,6 +43,10 @@ public class User {
     @Builder.Default
     private boolean enabled = true;
 
+    @Column(nullable = false)
+    @Builder.Default
+    private int versionRetentionDays = 30;
+
     @CreatedDate
     @Column(nullable = false, updatable = false)
     private Instant createdAt;

@@ -45,6 +45,7 @@ class DocumentServiceTest {
     @Mock private RecentlyViewedRepository recentlyViewedRepository;
     @Mock private DocumentVersionRepository documentVersionRepository;
     @Mock private TextExtractionService textExtractionService;
+    @Mock private dev.securecdms.repository.FavoriteRepository favoriteRepository;
 
     private DocumentService documentService;
     private User owner;
@@ -53,7 +54,7 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService, recentlyViewedRepository, documentVersionRepository, textExtractionService);
+        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService, recentlyViewedRepository, documentVersionRepository, textExtractionService, favoriteRepository);
 
         owner = User.builder().id(1L).username("owner").role(Role.ROLE_USER).build();
         otherUser = User.builder().id(2L).username("other").role(Role.ROLE_USER).build();
@@ -339,7 +340,7 @@ class DocumentServiceTest {
         when(documentRepository.findTrashByOwner(eq(owner), any()))
                 .thenReturn(new PageImpl<>(List.of(document)));
 
-        var result = documentService.listTrash("owner", PageRequest.of(0, 10));
+        var result = documentService.listTrash("owner", null, PageRequest.of(0, 10));
 
         assertEquals(1, result.getContent().size());
     }

@@ -54,6 +54,7 @@ export interface DocumentResponse {
   uploadedAt: string
   currentVersion?: number
   versionCount?: number
+  favorite?: boolean
 }
 
 export interface VersionResponse {
@@ -95,6 +96,7 @@ export interface UserResponse {
   username: string
   email: string
   profilePicture: string | null
+  versionRetentionDays: number
   createdAt: string
 }
 
@@ -124,15 +126,34 @@ export const auth = {
       method: 'POST',
       body: JSON.stringify({ refreshToken }),
     }) as Promise<AuthResponse>,
+
+  forgotPassword: (email: string) =>
+    request('/api/auth/forgot-password', {
+      method: 'POST',
+      body: JSON.stringify({ email }),
+    }) as Promise<{ message: string }>,
+
+  resetPassword: (token: string, newPassword: string) =>
+    request('/api/auth/reset-password', {
+      method: 'POST',
+      body: JSON.stringify({ token, newPassword }),
+    }) as Promise<{ message: string }>,
+
+  changePassword: (currentPassword: string, newPassword: string) =>
+    request('/api/auth/change-password', {
+      method: 'POST',
+      body: JSON.stringify({ currentPassword, newPassword }),
+    }) as Promise<{ message: string }>,
 }
 
 export const users = {
   getProfile: (id: number) =>
     request(`/api/users/${id}`) as Promise<UserResponse>,
 
-  updateProfile: (id: number, avatar: File) => {
+  updateProfile: (id: number, avatar?: File | null, versionRetentionDays?: number) => {
     const formData = new FormData()
-    formData.append('avatar', avatar)
+    if (avatar) formData.append('avatar', avatar)
+    if (versionRetentionDays !== undefined) formData.append('versionRetentionDays', String(versionRetentionDays))
     const headers: Record<string, string> = {}
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
     return fetch(`${API_BASE}/api/users/${id}`, {
@@ -178,8 +199,8 @@ export const folders = {
 }
 
 export const documents = {
-  list: (page = 0, size = 50) =>
-    request(`/api/documents?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+  list: (page = 0, size = 50, sort?: string) =>
+    request(`/api/documents?page=${page}&size=${size}${sort ? `&sort=${sort}` : ''}`) as Promise<PageResponse<DocumentResponse>>,
 
   search: (q: string, page = 0, size = 50) =>
     request(`/api/documents/search?q=${encodeURIComponent(q)}&page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
@@ -243,8 +264,8 @@ export const documents = {
   restore: (id: number) =>
     request(`/api/documents/${id}/restore`, { method: 'PATCH' }) as Promise<DocumentResponse>,
 
-  trash: (page = 0, size = 50) =>
-    request(`/api/documents/trash?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+  trash: (page = 0, size = 50, q?: string) =>
+    request(`/api/documents/trash?page=${page}&size=${size}${q ? `&q=${encodeURIComponent(q)}` : ''}`) as Promise<PageResponse<DocumentResponse>>,
 
   recentlyViewed: (page = 0, size = 20) =>
     request(`/api/documents/recently-viewed?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
@@ -269,6 +290,18 @@ export const documents = {
   },
 
   previewUrl: (id: number) => `${API_BASE}/api/documents/${id}/preview`,
+
+  getPreviewBlobUrl: async (id: number, mimeType?: string) => {
+    const headers: Record<string, string> = {}
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const res = await fetch(`${API_BASE}/api/documents/${id}/preview`, { headers })
+    if (!res.ok) throw new Error('Preview failed')
+    const blob = await res.blob()
+    const correctedBlob = mimeType ? new Blob([blob], { type: mimeType }) : blob
+    return URL.createObjectURL(correctedBlob)
+  },
+
+
 
   getContent: async (id: number) => {
     const headers: Record<string, string> = {}
@@ -331,6 +364,12 @@ export const documents = {
     URL.revokeObjectURL(url)
   },
 
+  toggleFavorite: (id: number) =>
+    request(`/api/documents/${id}/favorite`, { method: 'POST' }) as Promise<{ favorite: boolean }>,
+
+  listFavorites: () =>
+    request('/api/documents/favorites') as Promise<DocumentResponse[]>,
+
   permissions: {
     list: (docId: number) =>
       request(`/api/documents/${docId}/permissions`) as Promise<PermissionResponse[]>,
@@ -358,4 +397,10 @@ export const notifications = {
 
   markAllRead: () =>
     request('/api/notifications/read-all', { method: 'PUT' }) as Promise<void>,
+
+  delete: (id: number) =>
+    request(`/api/notifications/${id}`, { method: 'DELETE' }) as Promise<void>,
+
+  clearAll: () =>
+    request('/api/notifications/clear-all', { method: 'DELETE' }) as Promise<void>,
 }
