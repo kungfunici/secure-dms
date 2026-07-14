@@ -59,6 +59,7 @@ export default function Dashboard() {
   // Preview
   const [previewDoc, setPreviewDoc] = useState<DocumentResponse | null>(null)
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null)
+  const [previewTextContent, setPreviewTextContent] = useState<string | null>(null)
 
   // Versions
   const [versionDocId, setVersionDocId] = useState<number | null>(null)
@@ -668,10 +669,15 @@ export default function Dashboard() {
                       )}
                       {!isTrash && (
                         <Button variant="ghost" size="icon" onClick={async () => {
-                          setPreviewDoc(doc); setPreviewBlobUrl(null)
+                          setPreviewDoc(doc); setPreviewBlobUrl(null); setPreviewTextContent(null)
                           try {
-                            const url = await documents.getPreviewBlobUrl(doc.id, doc.contentType)
-                            setPreviewBlobUrl(url)
+                            if (doc.contentType?.startsWith('text/')) {
+                              const text = await documents.getContent(doc.id)
+                              setPreviewTextContent(text)
+                            } else {
+                              const url = await documents.getPreviewBlobUrl(doc.id, doc.contentType)
+                              setPreviewBlobUrl(url)
+                            }
                           } catch { setError('Failed to load preview') }
                         }} title="Preview">
                           <Eye className="h-4 w-4" />
@@ -766,9 +772,14 @@ export default function Dashboard() {
                     <div className="flex items-center gap-1">
                       {!isTrash && (
                         <Button variant="ghost" size="icon" className="h-7 w-7" title="Preview" onClick={async () => {
-                          setPreviewDoc(doc); setPreviewBlobUrl(null)
-                          try { setPreviewBlobUrl(await documents.getPreviewBlobUrl(doc.id, doc.contentType)) }
-                          catch { setError('Failed to load preview') }
+                          setPreviewDoc(doc); setPreviewBlobUrl(null); setPreviewTextContent(null)
+                          try {
+                            if (doc.contentType?.startsWith('text/')) {
+                              setPreviewTextContent(await documents.getContent(doc.id))
+                            } else {
+                              setPreviewBlobUrl(await documents.getPreviewBlobUrl(doc.id, doc.contentType))
+                            }
+                          } catch { setError('Failed to load preview') }
                         }}>
                           <Eye className="h-3.5 w-3.5" />
                         </Button>
@@ -861,7 +872,7 @@ export default function Dashboard() {
 
       {/* Preview Dialog */}
       {previewDoc && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl); setPreviewDoc(null) }}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { if (previewBlobUrl) URL.revokeObjectURL(previewBlobUrl); setPreviewDoc(null); setPreviewTextContent(null) }}>
           <div className="bg-background rounded-xl w-full max-w-4xl max-h-[90vh] flex flex-col shadow-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
               <div>
@@ -876,7 +887,9 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="flex-1 overflow-auto p-6 bg-muted/20 flex items-start justify-center">
-              {!previewBlobUrl && !previewDoc.contentType.startsWith('image/') && previewDoc.contentType !== 'application/pdf' && !previewDoc.contentType.startsWith('text/') ? (
+              {previewDoc.contentType.startsWith('text/') && previewTextContent !== null ? (
+                <pre className="w-full h-[70vh] overflow-auto p-4 rounded-lg border bg-card text-sm font-mono whitespace-pre-wrap">{previewTextContent}</pre>
+              ) : !previewBlobUrl && !previewDoc.contentType.startsWith('image/') && previewDoc.contentType !== 'application/pdf' ? (
                 <div className="text-center py-12">
                   <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
                   <p className="text-sm text-muted-foreground">
@@ -898,8 +911,6 @@ export default function Dashboard() {
                   className="max-w-full max-h-[70vh] rounded-lg shadow" />
               ) : previewDoc.contentType === 'application/pdf' ? (
                 <embed src={previewBlobUrl} type="application/pdf" className="w-full h-[70vh] rounded-lg" />
-              ) : previewDoc.contentType.startsWith('text/') ? (
-                <iframe src={previewBlobUrl} className="w-full h-[70vh] rounded-lg bg-white" title="Preview" />
               ) : (
                 <div className="text-center py-12">
                   <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
