@@ -37,7 +37,7 @@ public class UserService {
     public UserResponse updateProfile(Long userId, String username, MultipartFile avatar) throws IOException {
         User user = findUser(userId);
 
-        if (!user.getId().equals(userId)) {
+        if (!user.getUsername().equals(username)) {
             throw new AccessDeniedException("Cannot update another user's profile");
         }
 

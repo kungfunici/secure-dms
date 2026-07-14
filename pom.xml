@@ -92,6 +92,13 @@
             <version>2.15.1</version>
         </dependency>
 
+        <!-- Apache Tika für Textextraktion -->
+        <dependency>
+            <groupId>org.apache.tika</groupId>
+            <artifactId>tika-core</artifactId>
+            <version>2.9.2</version>
+        </dependency>
+
         <!-- Bucket4j für Rate Limiting -->
         <dependency>
             <groupId>com.bucket4j</groupId>

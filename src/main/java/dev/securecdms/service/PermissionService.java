@@ -24,6 +24,7 @@ public class PermissionService {
     private final DocumentRepository documentRepository;
     private final UserRepository userRepository;
     private final AuditService auditService;
+    private final NotificationService notificationService;
 
     @Transactional
     public PermissionResponse grant(Long documentId, ShareRequest request, String ownerUsername) {
@@ -61,6 +62,11 @@ public class PermissionService {
 
         auditService.log("SHARE", owner.getId(), documentId,
                 "Shared " + type + " access with " + targetUser.getUsername(), null);
+
+        notificationService.create(targetUser.getId(), "SHARE",
+                doc.getOriginalFilename(),
+                owner.getUsername() + " gave you " + type + " access",
+                documentId);
 
         log.info("Shared {} access to document {} with user {}", type, documentId, targetUser.getUsername());
         return toResponse(perm);

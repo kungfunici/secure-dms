@@ -28,6 +28,7 @@ class PermissionServiceTest {
     @Mock private DocumentRepository documentRepository;
     @Mock private UserRepository userRepository;
     @Mock private AuditService auditService;
+    @Mock private NotificationService notificationService;
 
     private PermissionService permissionService;
     private User owner;
@@ -36,13 +37,13 @@ class PermissionServiceTest {
 
     @BeforeEach
     void setUp() {
-        permissionService = new PermissionService(documentRepository, userRepository, auditService);
+        permissionService = new PermissionService(documentRepository, userRepository, auditService, notificationService);
 
         owner = User.builder().id(1L).username("owner").role(Role.ROLE_USER).build();
         targetUser = User.builder().id(2L).username("target").role(Role.ROLE_USER).build();
 
         document = Document.builder()
-                .id(1L).owner(owner).permissions(new ArrayList<>()).build();
+                .id(1L).owner(owner).originalFilename("doc.pdf").permissions(new ArrayList<>()).build();
     }
 
     private ShareRequest shareReq(Long userId, String type) {
@@ -64,6 +65,18 @@ class PermissionServiceTest {
         assertEquals(1, document.getPermissions().size());
         assertEquals(DocumentPermission.PermissionType.READ, document.getPermissions().getFirst().getPermissionType());
         verify(auditService).log(eq("SHARE"), eq(1L), eq(1L), any(), eq(null));
+    }
+
+    @Test
+    void grant_shouldCreateNotification() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(userRepository.findById(2L)).thenReturn(Optional.of(targetUser));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        permissionService.grant(1L, shareReq(2L, "WRITE"), "owner");
+
+        verify(notificationService).create(eq(2L), eq("SHARE"), anyString(), anyString(), eq(1L));
     }
 
     @Test

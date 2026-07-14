@@ -13,9 +13,13 @@ public class DocumentResponse {
     private String contentType;
     private Long fileSize;
     private String description;
+    private String documentType;
     private String ownerUsername;
     private String permission;
     private Long folderId;
     private String folderName;
+    private Instant deletedAt;
     private Instant uploadedAt;
+    private Integer currentVersion;
+    private Integer versionCount;
 }

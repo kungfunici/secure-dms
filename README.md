@@ -193,3 +193,5 @@ users (id, username, email, password_hash, role, profile_picture, enabled, creat
 
 Uses H2 in-memory database with `@ActiveProfiles("test")` (Flyway disabled). Currently **68 tests** across controllers, services, and integration.
 
+© 2026 Niclas Luca Koch — All Rights Reserved
+

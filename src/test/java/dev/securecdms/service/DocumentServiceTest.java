@@ -4,10 +4,14 @@ import dev.securecdms.exception.AccessDeniedException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.model.Document;
 import dev.securecdms.model.DocumentPermission;
+import dev.securecdms.model.DocumentVersion;
+import dev.securecdms.model.RecentlyViewed;
 import dev.securecdms.model.Role;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
+import dev.securecdms.repository.DocumentVersionRepository;
 import dev.securecdms.repository.FolderRepository;
+import dev.securecdms.repository.RecentlyViewedRepository;
 import dev.securecdms.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -38,6 +42,9 @@ class DocumentServiceTest {
     @Mock private FolderRepository folderRepository;
     @Mock private StorageService storageService;
     @Mock private AuditService auditService;
+    @Mock private RecentlyViewedRepository recentlyViewedRepository;
+    @Mock private DocumentVersionRepository documentVersionRepository;
+    @Mock private TextExtractionService textExtractionService;
 
     private DocumentService documentService;
     private User owner;
@@ -46,7 +53,7 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService);
+        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService, recentlyViewedRepository, documentVersionRepository, textExtractionService);
 
         owner = User.builder().id(1L).username("owner").role(Role.ROLE_USER).build();
         otherUser = User.builder().id(2L).username("other").role(Role.ROLE_USER).build();
@@ -71,7 +78,7 @@ class DocumentServiceTest {
         when(storageService.store(any())).thenReturn("stored-uuid.pdf");
         when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        var response = documentService.upload(file, "Q2 report", null, "owner");
+        var response = documentService.upload(file, "Q2 report", null, null, "owner");
 
         assertEquals("report.pdf", response.getOriginalFilename());
         assertEquals("Q2 report", response.getDescription());
@@ -85,7 +92,7 @@ class DocumentServiceTest {
     void upload_shouldRejectUnsupportedFileType() {
         MultipartFile file = new MockMultipartFile("file", "script.exe", "application/x-msdownload", "blah".getBytes());
 
-        assertThrows(IllegalArgumentException.class, () -> documentService.upload(file, null, null, "owner"));
+        assertThrows(IllegalArgumentException.class, () -> documentService.upload(file, null, null, null, "owner"));
     }
 
     @Test
@@ -137,15 +144,17 @@ class DocumentServiceTest {
     }
 
     @Test
-    void delete_shouldAllowOwner() throws IOException {
+    void delete_shouldSoftDeleteForOwner() throws IOException {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         documentService.delete(1L, "owner");
 
-        verify(storageService).delete("uuid-test.pdf");
-        verify(documentRepository).delete(document);
-        verify(auditService).log(eq("DELETE"), eq(1L), eq(1L), any(), eq(null));
+        assertNotNull(document.getDeletedAt());
+        verify(documentRepository).save(document);
+        verify(auditService).log(eq("TRASH"), eq(1L), eq(1L), any(), eq(null));
+        verify(storageService, never()).delete(any());
+        verify(documentRepository, never()).delete(any());
     }
 
     @Test
@@ -215,5 +224,287 @@ class DocumentServiceTest {
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(AccessDeniedException.class, () -> documentService.update(1L, "other", null, "hacked"));
+    }
+
+    @Test
+    void upload_shouldAutoDetectDocumentType() throws IOException {
+        MultipartFile file = new MockMultipartFile("file", "report.pdf", "application/pdf", "content".getBytes());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(storageService.store(any())).thenReturn("stored-uuid.pdf");
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var response = documentService.upload(file, null, null, null, "owner");
+
+        assertEquals("PDF", response.getDocumentType());
+    }
+
+    @Test
+    void upload_shouldUseExplicitDocumentType() throws IOException {
+        MultipartFile file = new MockMultipartFile("file", "report.pdf", "application/pdf", "content".getBytes());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(storageService.store(any())).thenReturn("stored-uuid.pdf");
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var response = documentService.upload(file, null, "Word", null, "owner");
+
+        assertEquals("Word", response.getDocumentType());
+    }
+
+    @Test
+    void upload_shouldAutoDetectFromAllowedButUnmappedMime() throws IOException {
+        MultipartFile file = new MockMultipartFile("file", "data.bin", "text/csv", "a,b,c".getBytes());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(storageService.store(any())).thenReturn("stored-uuid.csv");
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var response = documentService.upload(file, null, null, null, "owner");
+
+        assertEquals("CSV", response.getDocumentType());
+    }
+
+    @Test
+    void delete_shouldPermanentlyDeleteWhenAlreadyInTrash() throws IOException {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        documentService.delete(1L, "owner");
+
+        verify(storageService).delete("uuid-test.pdf");
+        verify(documentRepository).delete(document);
+        verify(auditService).log(eq("DELETE"), eq(1L), eq(1L), any(), eq(null));
+    }
+
+    @Test
+    void restore_shouldClearDeletedAt() {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var response = documentService.restore(1L, "owner");
+
+        assertNull(response.getDeletedAt());
+        verify(auditService).log(eq("RESTORE"), eq(1L), eq(1L), any(), eq(null));
+    }
+
+    @Test
+    void restore_shouldThrowForNonOwner() {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.restore(1L, "other"));
+    }
+
+    @Test
+    void restore_shouldThrowWhenNotInTrash() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(IllegalArgumentException.class, () -> documentService.restore(1L, "owner"));
+    }
+
+    @Test
+    void download_shouldTrackRecentlyViewed() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(storageService.load("uuid-test.pdf")).thenReturn(Path.of("/tmp/uuid-test.pdf"));
+        when(recentlyViewedRepository.findByUserIdAndDocumentId(1L, 1L)).thenReturn(Optional.empty());
+
+        documentService.download(1L, "owner");
+
+        verify(recentlyViewedRepository).save(any(RecentlyViewed.class));
+    }
+
+    @Test
+    void download_shouldThrowForDeletedDocument() {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.download(1L, "owner"));
+    }
+
+    @Test
+    void listTrash_shouldReturnDeletedDocuments() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findTrashByOwner(eq(owner), any()))
+                .thenReturn(new PageImpl<>(List.of(document)));
+
+        var result = documentService.listTrash("owner", PageRequest.of(0, 10));
+
+        assertEquals(1, result.getContent().size());
+    }
+
+    @Test
+    void update_shouldThrowForDeletedDocument() {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.update(1L, "owner", null, "updated"));
+    }
+
+    @Test
+    void moveToFolder_shouldThrowForDeletedDocument() {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.moveToFolder(1L, 2L, "owner"));
+    }
+
+    @Test
+    void search_shouldExcludeDeletedDocuments() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.searchOwnedAndShared(eq(owner), eq("test"), any()))
+                .thenReturn(new PageImpl<>(List.of(document)));
+
+        var result = documentService.search("owner", "test", PageRequest.of(0, 10));
+
+        assertEquals(1, result.getContent().size());
+    }
+
+    @Test
+    void listSharedDocuments_shouldExcludeDeleted() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findSharedWithUser(eq(owner), any()))
+                .thenReturn(new PageImpl<>(List.of()));
+
+        var result = documentService.listSharedWithMe("owner", PageRequest.of(0, 10));
+
+        assertTrue(result.getContent().isEmpty());
+    }
+
+    @Test
+    void upload_shouldCreateVersion() throws IOException {
+        MultipartFile file = new MockMultipartFile("file", "test.pdf", "application/pdf", "content".getBytes());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(storageService.store(any())).thenReturn("stored-uuid.pdf");
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        documentService.upload(file, null, null, null, "owner");
+
+        verify(documentVersionRepository).save(any());
+    }
+
+    @Test
+    void upload_shouldExtractText() throws IOException {
+        MultipartFile file = new MockMultipartFile("file", "test.pdf", "application/pdf", "content".getBytes());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(storageService.store(any())).thenReturn("stored-uuid.pdf");
+        when(storageService.load(anyString())).thenReturn(Path.of("/tmp/stored-uuid.pdf"));
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(textExtractionService.extractText(any())).thenReturn("extracted text");
+
+        var response = documentService.upload(file, null, null, null, "owner");
+
+        verify(textExtractionService).extractText(any());
+    }
+
+    @Test
+    void getVersions_shouldReturnVersions() {
+        DocumentVersion version = DocumentVersion.builder()
+                .id(1L).document(document).versionNumber(1).fileSize(100L)
+                .contentType("application/pdf").uploadedBy(owner)
+                .createdAt(java.time.Instant.now()).build();
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(documentVersionRepository.findByDocumentOrderByVersionNumberDesc(document))
+                .thenReturn(List.of(version));
+
+        var result = documentService.getVersions(1L, "owner");
+
+        assertEquals(1, result.size());
+        assertEquals(1, result.getFirst().getVersionNumber());
+    }
+
+    @Test
+    void getVersions_shouldDenyAccess() {
+        when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.getVersions(1L, "other"));
+    }
+
+    @Test
+    void preview_shouldReturnPath() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(storageService.load("uuid-test.pdf")).thenReturn(Path.of("/tmp/uuid-test.pdf"));
+
+        var result = documentService.preview(1L, "owner");
+
+        assertEquals("uuid-test.pdf", result.path().getFileName().toString());
+    }
+
+    @Test
+    void preview_shouldDenyWithoutAccess() {
+        when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.preview(1L, "other"));
+    }
+
+    @Test
+    void preview_shouldDenyForDeletedDocument() {
+        document.setDeletedAt(java.time.Instant.now());
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.preview(1L, "owner"));
+    }
+
+    @Test
+    void batchDelete_shouldCallDeleteForEach() throws IOException {
+        Document doc2 = Document.builder().id(2L).owner(owner).build();
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(documentRepository.findById(2L)).thenReturn(Optional.of(doc2));
+
+        documentService.batchDelete(List.of(1L, 2L), "owner");
+
+        assertNotNull(document.getDeletedAt());
+        assertNotNull(doc2.getDeletedAt());
+    }
+
+    @Test
+    void batchMove_shouldCallMoveForEach() {
+        Document doc2 = Document.builder().id(2L).owner(owner).build();
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(documentRepository.findById(2L)).thenReturn(Optional.of(doc2));
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        documentService.batchMove(List.of(1L, 2L), null, "owner");
+
+        verify(documentRepository, times(2)).save(any());
+    }
+
+    @Test
+    void search_shouldAlsoSearchInExtractedText() {
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.searchOwnedAndShared(eq(owner), eq("content"), any()))
+                .thenReturn(new PageImpl<>(List.of(document)));
+
+        var result = documentService.search("owner", "content", PageRequest.of(0, 10));
+
+        assertEquals(1, result.getContent().size());
     }
 }

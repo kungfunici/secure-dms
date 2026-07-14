@@ -15,15 +15,26 @@ import org.springframework.stereotype.Repository;
 @Repository
 public interface DocumentRepository extends JpaRepository<Document, Long> {
 
-    Page<Document> findByOwner(User owner, Pageable pageable);
+    @Query("""
+        SELECT d FROM Document d
+        WHERE d.owner = :owner AND d.deletedAt IS NULL
+        """)
+    Page<Document> findByOwner(@Param("owner") User owner, Pageable pageable);
+
+    @Query("""
+        SELECT d FROM Document d
+        WHERE d.owner = :owner AND d.deletedAt IS NOT NULL
+        """)
+    Page<Document> findTrashByOwner(@Param("owner") User owner, Pageable pageable);
 
     List<Document> findByOwnerAndFolder(User owner, Folder folder);
 
-    List<Document> findByOwnerAndFolderIsNull(User owner);
+    List<Document> findByOwnerAndFolderIsNullAndDeletedAtIsNull(User owner);
 
     @Query("""
         SELECT d FROM Document d
         WHERE d.owner = :owner
+          AND d.deletedAt IS NULL
           AND (LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', :query, '%'))
                OR LOWER(d.description) LIKE LOWER(CONCAT('%', :query, '%')))
         """)
@@ -34,20 +45,21 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     @Query("""
         SELECT d FROM Document d
         JOIN d.permissions p
-        WHERE p.user = :user
+        WHERE p.user = :user AND d.deletedAt IS NULL
         """)
     Page<Document> findSharedWithUser(@Param("user") User user, Pageable pageable);
 
     @Query("""
         SELECT d FROM Document d
         JOIN d.permissions p
-        WHERE p.user = :user
+        WHERE p.user = :user AND d.deletedAt IS NULL
         """)
     List<Document> findSharedWithUserList(@Param("user") User user);
 
     @Query("""
         SELECT DISTINCT d FROM Document d
         WHERE d.owner = :owner
+          AND d.deletedAt IS NULL
           AND d.permissions IS NOT EMPTY
         """)
     Page<Document> findSharedByOwner(@Param("owner") User owner, Pageable pageable);
@@ -56,10 +68,12 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
         SELECT DISTINCT d FROM Document d
         LEFT JOIN d.permissions p
         WHERE (d.owner = :user OR p.user = :user)
+          AND d.deletedAt IS NULL
           AND (LOWER(d.originalFilename) LIKE LOWER(CONCAT('%', :query, '%'))
-               OR LOWER(d.description) LIKE LOWER(CONCAT('%', :query, '%')))
+               OR LOWER(d.description) LIKE LOWER(CONCAT('%', :query, '%'))
+               OR LOWER(d.extractedText) LIKE LOWER(CONCAT('%', :query, '%')))
         """)
     Page<Document> searchOwnedAndShared(@Param("user") User user,
-                                        @Param("query") String query,
-                                        Pageable pageable);
+                                         @Param("query") String query,
+                                         Pageable pageable);
 }

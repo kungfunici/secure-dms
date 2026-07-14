@@ -53,6 +53,16 @@ public class StorageService {
         return file;
     }
 
+    public void copy(String sourceFilename, String targetFilename) throws IOException {
+        Path source = uploadDir.resolve(sourceFilename).normalize();
+        if (!source.startsWith(uploadDir)) {
+            throw new SecurityException("Invalid file path");
+        }
+        Path target = uploadDir.resolve(targetFilename).normalize();
+        Files.copy(source, target, StandardCopyOption.REPLACE_EXISTING);
+        log.debug("File copied: {} -> {}", sourceFilename, targetFilename);
+    }
+
     public void delete(String storedFilename) throws IOException {
         Path file = uploadDir.resolve(storedFilename).normalize();
         if (!file.startsWith(uploadDir)) {

@@ -38,6 +38,19 @@ public class Document {
     @Column(length = 1000)
     private String description;
 
+    @Column(columnDefinition = "TEXT")
+    private String extractedText;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Integer currentVersion = 1;
+
+    @Column(length = 50)
+    private String documentType;
+
+    @Column
+    private Instant deletedAt;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id", nullable = false)
     private User owner;

@@ -45,11 +45,24 @@ export interface DocumentResponse {
   contentType: string
   fileSize: number
   description: string
+  documentType?: string
   ownerUsername: string
   permission?: string
   folderId?: number
   folderName?: string
+  deletedAt?: string
   uploadedAt: string
+  currentVersion?: number
+  versionCount?: number
+}
+
+export interface VersionResponse {
+  id: number
+  versionNumber: number
+  fileSize: number
+  contentType: string
+  uploadedByUsername: string
+  createdAt: string
 }
 
 export interface FolderResponse {
@@ -65,6 +78,16 @@ export interface PermissionResponse {
   username: string
   permissionType: string
   grantedAt: string
+}
+
+export interface NotificationResponse {
+  id: number
+  type: string
+  title: string
+  message?: string
+  documentId?: number
+  read: boolean
+  createdAt: string
 }
 
 export interface UserResponse {
@@ -173,10 +196,11 @@ export const documents = {
     return request(path, { method: 'PATCH' }) as Promise<DocumentResponse>
   },
 
-  upload: (file: File, description: string, folderId?: number) => {
+  upload: (file: File, description: string, documentType?: string, folderId?: number) => {
     const formData = new FormData()
     formData.append('file', file)
     formData.append('description', description)
+    if (documentType) formData.append('documentType', documentType)
     if (folderId !== undefined) formData.append('folderId', String(folderId))
     const headers: Record<string, string> = {}
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
@@ -216,6 +240,15 @@ export const documents = {
   delete: (id: number) =>
     request(`/api/documents/${id}`, { method: 'DELETE' }) as Promise<void>,
 
+  restore: (id: number) =>
+    request(`/api/documents/${id}/restore`, { method: 'PATCH' }) as Promise<DocumentResponse>,
+
+  trash: (page = 0, size = 50) =>
+    request(`/api/documents/trash?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+
+  recentlyViewed: (page = 0, size = 20) =>
+    request(`/api/documents/recently-viewed?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+
   update: (id: number, file: File, description: string) => {
     const formData = new FormData()
     formData.append('file', file)
@@ -235,6 +268,69 @@ export const documents = {
     })
   },
 
+  previewUrl: (id: number) => `${API_BASE}/api/documents/${id}/preview`,
+
+  getContent: async (id: number) => {
+    const headers: Record<string, string> = {}
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const res = await fetch(`${API_BASE}/api/documents/${id}/content`, { headers })
+    if (!res.ok) { const body = await res.json().catch(() => ({ error: res.statusText })); throw new Error(body.error || 'Failed to load content') }
+    return res.text()
+  },
+
+  updateContent: async (id: number, content: string) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const res = await fetch(`${API_BASE}/api/documents/${id}/content`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ content }),
+    })
+    if (!res.ok) { const body = await res.json().catch(() => ({ error: res.statusText })); throw new Error(body.error || 'Failed to save content') }
+    return res.json() as Promise<DocumentResponse>
+  },
+
+  getVersions: (id: number) =>
+    request(`/api/documents/${id}/versions`) as Promise<VersionResponse[]>,
+
+  restoreVersion: (id: number, versionId: number) =>
+    request(`/api/documents/${id}/versions/${versionId}/restore`, { method: 'POST' }) as Promise<DocumentResponse>,
+
+  batchDelete: async (ids: number[]) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const res = await fetch(`${API_BASE}/api/documents/batch/delete`, {
+      method: 'POST', headers, body: JSON.stringify(ids),
+    })
+    if (!res.ok) { const body = await res.json().catch(() => ({ error: res.statusText })); throw new Error(body.error || 'Batch delete failed') }
+  },
+
+  batchMove: async (ids: number[], folderId: number | null) => {
+    const params = folderId !== null ? `?folderId=${folderId}` : ''
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const res = await fetch(`${API_BASE}/api/documents/batch/move${params}`, {
+      method: 'POST', headers, body: JSON.stringify(ids),
+    })
+    if (!res.ok) { const body = await res.json().catch(() => ({ error: res.statusText })); throw new Error(body.error || 'Batch move failed') }
+  },
+
+  batchDownload: async (ids: number[]) => {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    const res = await fetch(`${API_BASE}/api/documents/batch/download`, {
+      method: 'POST', headers, body: JSON.stringify(ids),
+    })
+    if (!res.ok) { const body = await res.json().catch(() => ({ error: res.statusText })); throw new Error(body.error || 'Batch download failed') }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'documents.zip'
+    a.click()
+    URL.revokeObjectURL(url)
+  },
+
   permissions: {
     list: (docId: number) =>
       request(`/api/documents/${docId}/permissions`) as Promise<PermissionResponse[]>,
@@ -248,4 +344,18 @@ export const documents = {
     revoke: (docId: number, userId: number) =>
       request(`/api/documents/${docId}/permissions/${userId}`, { method: 'DELETE' }) as Promise<void>,
   },
+}
+
+export const notifications = {
+  list: () =>
+    request('/api/notifications') as Promise<NotificationResponse[]>,
+
+  unreadCount: () =>
+    request('/api/notifications/unread-count') as Promise<{ count: number }>,
+
+  markRead: (id: number) =>
+    request(`/api/notifications/${id}/read`, { method: 'PUT' }) as Promise<void>,
+
+  markAllRead: () =>
+    request('/api/notifications/read-all', { method: 'PUT' }) as Promise<void>,
 }

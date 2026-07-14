@@ -1,14 +1,19 @@
 package dev.securecdms.service;
 
 import dev.securecdms.dto.response.DocumentResponse;
+import dev.securecdms.dto.response.VersionResponse;
 import dev.securecdms.exception.AccessDeniedException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.model.Document;
 import dev.securecdms.model.DocumentPermission;
+import dev.securecdms.model.DocumentVersion;
 import dev.securecdms.model.Folder;
+import dev.securecdms.model.RecentlyViewed;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
+import dev.securecdms.repository.DocumentVersionRepository;
 import dev.securecdms.repository.FolderRepository;
+import dev.securecdms.repository.RecentlyViewedRepository;
 import dev.securecdms.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,8 +25,15 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Instant;
+import java.util.List;
+import java.util.Map;
 import java.util.Set;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 @Slf4j
 @Service
@@ -33,9 +45,27 @@ public class DocumentService {
     private final FolderRepository folderRepository;
     private final StorageService storageService;
     private final AuditService auditService;
+    private final RecentlyViewedRepository recentlyViewedRepository;
+    private final DocumentVersionRepository documentVersionRepository;
+    private final TextExtractionService textExtractionService;
+
+    private static final Map<String, String> MIME_TO_DOC_TYPE = Map.ofEntries(
+            Map.entry("application/pdf", "PDF"),
+            Map.entry("application/msword", "Word"),
+            Map.entry("application/vnd.openxmlformats-officedocument.wordprocessingml.document", "Word"),
+            Map.entry("application/vnd.ms-excel", "Excel"),
+            Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Excel"),
+            Map.entry("application/vnd.ms-powerpoint", "PowerPoint"),
+            Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", "PowerPoint"),
+            Map.entry("text/plain", "Text"),
+            Map.entry("text/csv", "CSV"),
+            Map.entry("image/png", "Image"),
+            Map.entry("image/jpeg", "Image"),
+            Map.entry("image/gif", "Image")
+    );
 
     @Transactional
-    public DocumentResponse upload(MultipartFile file, String description, Long folderId, String username) throws IOException {
+    public DocumentResponse upload(MultipartFile file, String description, String documentType, Long folderId, String username) throws IOException {
         validateFileType(file);
         User owner = getUser(username);
 
@@ -50,17 +80,27 @@ public class DocumentService {
 
         String storedFilename = storageService.store(file);
 
+        String type = documentType != null ? documentType : MIME_TO_DOC_TYPE.getOrDefault(file.getContentType(), "Other");
+
+        String extractedText = extractText(storedFilename);
+
         Document doc = Document.builder()
                 .originalFilename(file.getOriginalFilename())
                 .storedFilename(storedFilename)
                 .contentType(file.getContentType())
                 .fileSize(file.getSize())
                 .description(description)
+                .documentType(type)
                 .owner(owner)
                 .folder(folder)
+                .extractedText(extractedText)
+                .currentVersion(1)
                 .build();
 
         documentRepository.save(doc);
+
+        saveVersion(doc, 1, storedFilename, file.getSize(), file.getContentType(), owner);
+
         log.info("Document uploaded: {} by {}", file.getOriginalFilename(), username);
 
         auditService.log("UPLOAD", owner.getId(), doc.getId(),
@@ -74,6 +114,10 @@ public class DocumentService {
         Document doc = getDocument(documentId);
         User user = getUser(username);
 
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Cannot update a deleted document");
+        }
+
         boolean isOwner = doc.getOwner().getId().equals(user.getId());
         boolean canWrite = hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
 
@@ -83,12 +127,20 @@ public class DocumentService {
 
         if (file != null && !file.isEmpty()) {
             validateFileType(file);
+
+            int nextVersion = doc.getCurrentVersion() + 1;
+            saveVersion(doc, nextVersion, doc.getStoredFilename(), doc.getFileSize(), doc.getContentType(), doc.getOwner());
+
             storageService.delete(doc.getStoredFilename());
             String newStoredFilename = storageService.store(file);
             doc.setStoredFilename(newStoredFilename);
             doc.setOriginalFilename(file.getOriginalFilename());
             doc.setContentType(file.getContentType());
             doc.setFileSize(file.getSize());
+            doc.setCurrentVersion(nextVersion);
+
+            String extractedText = extractText(newStoredFilename);
+            doc.setExtractedText(extractedText);
         }
 
         if (description != null) {
@@ -104,10 +156,77 @@ public class DocumentService {
         return toResponse(doc, user);
     }
 
+    @Transactional(readOnly = true)
+    public List<VersionResponse> getVersions(Long documentId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+        checkAccess(doc, user);
+
+        return documentVersionRepository.findByDocumentOrderByVersionNumberDesc(doc).stream()
+                .map(v -> VersionResponse.builder()
+                        .id(v.getId())
+                        .versionNumber(v.getVersionNumber())
+                        .fileSize(v.getFileSize())
+                        .contentType(v.getContentType())
+                        .uploadedByUsername(v.getUploadedBy() != null ? v.getUploadedBy().getUsername() : null)
+                        .createdAt(v.getCreatedAt())
+                        .build())
+                .toList();
+    }
+
+    @Transactional
+    public DocumentResponse restoreVersion(Long documentId, Long versionId, String username) throws IOException {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Cannot restore version of a deleted document");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canWrite = hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+        if (!isOwner && !canWrite) {
+            throw new AccessDeniedException("Only the owner or a user with WRITE permission can restore versions");
+        }
+
+        DocumentVersion version = documentVersionRepository.findById(versionId)
+                .orElseThrow(() -> new ResourceNotFoundException("Version not found: " + versionId));
+
+        if (!version.getDocument().getId().equals(documentId)) {
+            throw new IllegalArgumentException("Version does not belong to this document");
+        }
+
+        int nextVersion = doc.getCurrentVersion() + 1;
+        saveVersion(doc, nextVersion, doc.getStoredFilename(), doc.getFileSize(), doc.getContentType(), doc.getOwner());
+
+        storageService.delete(doc.getStoredFilename());
+
+        String restoredFilename = "restored-" + version.getVersionNumber() + "-" + version.getStoredFilename();
+        storageService.copy(version.getStoredFilename(), restoredFilename);
+        doc.setStoredFilename(restoredFilename);
+        doc.setFileSize(version.getFileSize());
+        doc.setContentType(version.getContentType());
+        doc.setCurrentVersion(nextVersion);
+
+        String extractedText = extractText(restoredFilename);
+        doc.setExtractedText(extractedText);
+
+        documentRepository.save(doc);
+
+        auditService.log("RESTORE_VERSION", user.getId(), documentId,
+                "Restored version " + version.getVersionNumber() + ": " + doc.getOriginalFilename(), null);
+
+        return toResponse(doc, user);
+    }
+
     @Transactional
     public DocumentResponse moveToFolder(Long documentId, Long folderId, String username) {
         Document doc = getDocument(documentId);
         User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Cannot move a deleted document");
+        }
 
         if (!doc.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("Only the owner can move this document");
@@ -128,10 +247,159 @@ public class DocumentService {
         return toResponse(doc, user);
     }
 
+    // ---- Batch operations ----
+
+    @Transactional
+    public void batchDelete(List<Long> documentIds, String username) throws IOException {
+        User user = getUser(username);
+        for (Long id : documentIds) {
+            delete(id, username);
+        }
+        auditService.log("BATCH_DELETE", user.getId(), null,
+                "Batch deleted " + documentIds.size() + " documents", null);
+    }
+
+    @Transactional
+    public void batchMove(List<Long> documentIds, Long folderId, String username) {
+        User user = getUser(username);
+        for (Long id : documentIds) {
+            moveToFolder(id, folderId, username);
+        }
+        auditService.log("BATCH_MOVE", user.getId(), null,
+                "Batch moved " + documentIds.size() + " documents to folder " + folderId, null);
+    }
+
+    @Transactional(readOnly = true)
+    public void batchDownload(List<Long> documentIds, String username, OutputStream outputStream) throws IOException {
+        User user = getUser(username);
+        try (ZipOutputStream zos = new ZipOutputStream(outputStream)) {
+            for (Long id : documentIds) {
+                Document doc = getDocument(id);
+                checkAccess(doc, user);
+
+                if (doc.getDeletedAt() != null) continue;
+
+                Path filePath = storageService.load(doc.getStoredFilename());
+                ZipEntry entry = new ZipEntry(doc.getOriginalFilename());
+                entry.setSize(doc.getFileSize());
+                zos.putNextEntry(entry);
+                Files.copy(filePath, zos);
+                zos.closeEntry();
+            }
+        }
+        auditService.log("BATCH_DOWNLOAD", user.getId(), null,
+                "Batch downloaded " + documentIds.size() + " documents", null);
+    }
+
+    // ---- Preview ----
+
+    @Transactional(readOnly = true)
+    public DownloadResult preview(Long documentId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Document is in trash");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canRead = hasPermission(doc, user, DocumentPermission.PermissionType.READ)
+                       || hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+
+        if (!isOwner && !canRead) {
+            throw new AccessDeniedException("Access denied to document " + documentId);
+        }
+
+        return new DownloadResult(
+                storageService.load(doc.getStoredFilename()),
+                doc.getOriginalFilename());
+    }
+
+    // ---- Text Content Editing ----
+
+    @Transactional(readOnly = true)
+    public String getContent(Long documentId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Document is in trash");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canRead = hasPermission(doc, user, DocumentPermission.PermissionType.READ)
+                       || hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+
+        if (!isOwner && !canRead) {
+            throw new AccessDeniedException("Access denied to document " + documentId);
+        }
+
+        if (!isTextContent(doc.getContentType())) {
+            throw new IllegalArgumentException("Document type is not editable as text: " + doc.getContentType());
+        }
+
+        try {
+            Path filePath = storageService.load(doc.getStoredFilename());
+            return Files.readString(filePath);
+        } catch (IOException e) {
+            throw new RuntimeException("Failed to read document content", e);
+        }
+    }
+
+    @Transactional
+    public DocumentResponse updateContent(Long documentId, String content, String username) throws IOException {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Cannot update a deleted document");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canWrite = hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+
+        if (!isOwner && !canWrite) {
+            throw new AccessDeniedException("Only the owner or a user with WRITE permission can edit this document");
+        }
+
+        if (!isTextContent(doc.getContentType())) {
+            throw new IllegalArgumentException("Document type is not editable as text: " + doc.getContentType());
+        }
+
+        int nextVersion = doc.getCurrentVersion() + 1;
+        saveVersion(doc, nextVersion, doc.getStoredFilename(), doc.getFileSize(), doc.getContentType(), user);
+
+        Path filePath = storageService.load(doc.getStoredFilename());
+        Files.writeString(filePath, content);
+
+        doc.setCurrentVersion(nextVersion);
+        doc.setExtractedText(content);
+        documentRepository.save(doc);
+
+        auditService.log("EDIT", user.getId(), documentId,
+                "Edited content: " + doc.getOriginalFilename(), null);
+
+        return toResponse(doc, user);
+    }
+
+    private boolean isTextContent(String contentType) {
+        return contentType != null && (contentType.startsWith("text/")
+                || contentType.equals("application/json")
+                || contentType.equals("application/xml"));
+    }
+
+    // ---- Standard CRUD ----
+
     @Transactional(readOnly = true)
     public Page<DocumentResponse> listMyDocuments(String username, Pageable pageable) {
         User owner = getUser(username);
         return documentRepository.findByOwner(owner, pageable).map(d -> toResponse(d, owner));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<DocumentResponse> listTrash(String username, Pageable pageable) {
+        User owner = getUser(username);
+        return documentRepository.findTrashByOwner(owner, pageable).map(d -> toResponse(d, owner));
     }
 
     @Transactional(readOnly = true)
@@ -141,9 +409,32 @@ public class DocumentService {
     }
 
     @Transactional(readOnly = true)
+    public Page<DocumentResponse> listRecentlyViewed(String username, Pageable pageable) {
+        User user = getUser(username);
+        List<RecentlyViewed> recent = recentlyViewedRepository.findByUserOrderByViewedAtDesc(user);
+        List<Long> docIds = recent.stream()
+                .map(r -> r.getDocument().getId())
+                .toList();
+        if (docIds.isEmpty()) {
+            return Page.empty();
+        }
+        return documentRepository.findAllById(docIds)
+                .stream()
+                .filter(d -> d.getDeletedAt() == null)
+                .map(d -> toResponse(d, user))
+                .collect(java.util.stream.Collectors.collectingAndThen(
+                        java.util.stream.Collectors.toList(),
+                        list -> new org.springframework.data.domain.PageImpl<>(list, pageable, list.size())));
+    }
+
+    @Transactional(readOnly = true)
     public DownloadResult download(Long documentId, String username) {
         Document doc = getDocument(documentId);
         User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Document is in trash");
+        }
 
         boolean isOwner = doc.getOwner().getId().equals(user.getId());
         boolean canRead = hasPermission(doc, user, DocumentPermission.PermissionType.READ)
@@ -152,6 +443,15 @@ public class DocumentService {
         if (!isOwner && !canRead) {
             throw new AccessDeniedException("Access denied to document " + documentId);
         }
+
+        recentlyViewedRepository.findByUserIdAndDocumentId(user.getId(), documentId)
+                .ifPresentOrElse(
+                        rv -> { rv.setViewedAt(Instant.now()); recentlyViewedRepository.save(rv); },
+                        () -> {
+                            RecentlyViewed rv = RecentlyViewed.builder()
+                                    .user(user).document(doc).viewedAt(Instant.now()).build();
+                            recentlyViewedRepository.save(rv);
+                        });
 
         auditService.log("DOWNLOAD", user.getId(), doc.getId(),
                 "Downloaded: " + doc.getOriginalFilename(), null);
@@ -183,11 +483,19 @@ public class DocumentService {
         boolean isOwner = doc.getOwner().getId().equals(user.getId());
 
         if (isOwner) {
-            storageService.delete(doc.getStoredFilename());
-            documentRepository.delete(doc);
-            auditService.log("DELETE", user.getId(), documentId,
-                    "Deleted: " + doc.getOriginalFilename(), null);
-            log.info("Document deleted: {} by {}", doc.getOriginalFilename(), username);
+            if (doc.getDeletedAt() == null) {
+                doc.setDeletedAt(Instant.now());
+                documentRepository.save(doc);
+                auditService.log("TRASH", user.getId(), documentId,
+                        "Moved to trash: " + doc.getOriginalFilename(), null);
+                log.info("Document moved to trash: {} by {}", doc.getOriginalFilename(), username);
+            } else {
+                storageService.delete(doc.getStoredFilename());
+                documentRepository.delete(doc);
+                auditService.log("DELETE", user.getId(), documentId,
+                        "Permanently deleted: " + doc.getOriginalFilename(), null);
+                log.info("Document permanently deleted: {} by {}", doc.getOriginalFilename(), username);
+            }
         } else {
             boolean hadPermission = doc.getPermissions().removeIf(p -> p.getUser().getId().equals(user.getId()));
             if (!hadPermission) {
@@ -200,7 +508,62 @@ public class DocumentService {
         }
     }
 
+    @Transactional
+    public DocumentResponse restore(Long documentId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (!doc.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("Only the owner can restore this document");
+        }
+
+        if (doc.getDeletedAt() == null) {
+            throw new IllegalArgumentException("Document is not in trash");
+        }
+
+        doc.setDeletedAt(null);
+        documentRepository.save(doc);
+
+        auditService.log("RESTORE", user.getId(), documentId,
+                "Restored: " + doc.getOriginalFilename(), null);
+        log.info("Document restored: {} by {}", doc.getOriginalFilename(), username);
+
+        return toResponse(doc, user);
+    }
+
     // ---- Helpers ----
+
+    private String extractText(String storedFilename) {
+        try {
+            Path filePath = storageService.load(storedFilename);
+            return textExtractionService.extractText(filePath);
+        } catch (Exception e) {
+            log.warn("Text extraction failed for {}: {}", storedFilename, e.getMessage());
+            return null;
+        }
+    }
+
+    private void saveVersion(Document doc, int versionNumber, String storedFilename, Long fileSize, String contentType, User uploadedBy) {
+        DocumentVersion version = DocumentVersion.builder()
+                .document(doc)
+                .versionNumber(versionNumber)
+                .storedFilename(storedFilename)
+                .fileSize(fileSize)
+                .contentType(contentType)
+                .uploadedBy(uploadedBy)
+                .createdAt(Instant.now())
+                .build();
+        documentVersionRepository.save(version);
+    }
+
+    private void checkAccess(Document doc, User user) {
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canRead = hasPermission(doc, user, DocumentPermission.PermissionType.READ)
+                       || hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+        if (!isOwner && !canRead) {
+            throw new AccessDeniedException("Access denied to document " + doc.getId());
+        }
+    }
 
     private static final Set<String> ALLOWED_MIME_TYPES = Set.of(
             "application/pdf",
@@ -248,15 +611,20 @@ public class DocumentService {
     }
 
     private DocumentResponse toResponse(Document doc, User user) {
+        int versionCount = documentVersionRepository.countByDocument(doc);
         DocumentResponse.DocumentResponseBuilder builder = DocumentResponse.builder()
                 .id(doc.getId())
                 .originalFilename(doc.getOriginalFilename())
                 .contentType(doc.getContentType())
                 .fileSize(doc.getFileSize())
                 .description(doc.getDescription())
+                .documentType(doc.getDocumentType())
                 .ownerUsername(doc.getOwner().getUsername())
+                .deletedAt(doc.getDeletedAt())
                 .permission(resolvePermission(doc, user))
-                .uploadedAt(doc.getUploadedAt());
+                .uploadedAt(doc.getUploadedAt())
+                .currentVersion(doc.getCurrentVersion())
+                .versionCount(versionCount);
         if (doc.getFolder() != null) {
             builder.folderId(doc.getFolder().getId());
             builder.folderName(doc.getFolder().getName());
