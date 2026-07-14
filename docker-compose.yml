@@ -7,7 +7,7 @@ services:
       POSTGRES_USER: dms_user
       POSTGRES_PASSWORD: dms_secret
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped

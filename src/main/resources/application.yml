@@ -1,6 +1,6 @@
 spring:
   datasource:
-    url: jdbc:postgresql://localhost:5432/secure_dms
+    url: jdbc:postgresql://localhost:5433/secure_dms
     username: dms_user
     password: dms_secret
     driver-class-name: org.postgresql.Driver
