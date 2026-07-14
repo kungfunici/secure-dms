@@ -2,6 +2,7 @@ package dev.securecdms.controller;
 
 import dev.securecdms.dto.response.DocumentResponse;
 import dev.securecdms.service.DocumentService;
+import dev.securecdms.service.DocumentService.DownloadResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.core.io.PathResource;
 import org.springframework.core.io.Resource;
@@ -16,7 +17,6 @@ import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
-import java.nio.file.Path;
 
 @RestController
 @RequestMapping("/api/documents")
@@ -57,14 +57,23 @@ public class DocumentController {
             @PathVariable Long id,
             @AuthenticationPrincipal UserDetails userDetails) {
 
-        Path file = documentService.download(id, userDetails.getUsername());
-        Resource resource = new PathResource(file);
+        DownloadResult result = documentService.download(id, userDetails.getUsername());
+        Resource resource = new PathResource(result.path());
 
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION,
-                        "attachment; filename=\"" + file.getFileName() + "\"")
+                        "attachment; filename=\"" + result.originalFilename() + "\"")
                 .contentType(MediaType.APPLICATION_OCTET_STREAM)
                 .body(resource);
+    }
+
+    @GetMapping("/shared")
+    public ResponseEntity<Page<DocumentResponse>> listSharedDocuments(
+            @AuthenticationPrincipal UserDetails userDetails,
+            Pageable pageable) {
+
+        return ResponseEntity.ok(
+                documentService.listSharedDocuments(userDetails.getUsername(), pageable));
     }
 
     @DeleteMapping("/{id}")
