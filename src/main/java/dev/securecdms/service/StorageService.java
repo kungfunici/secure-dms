@@ -19,30 +19,28 @@ public class StorageService {
     public StorageService(@Value("${app.storage.upload-dir}") String uploadDir) throws IOException {
         this.uploadDir = Paths.get(uploadDir).toAbsolutePath().normalize();
         Files.createDirectories(this.uploadDir);
-        log.info("Upload-Verzeichnis: {}", this.uploadDir);
+        log.info("Upload directory: {}", this.uploadDir);
     }
 
     public String store(MultipartFile file) throws IOException {
-        // UUID als Dateiname — kein Path Traversal möglich
         String extension = getExtension(file.getOriginalFilename());
         String storedFilename = UUID.randomUUID() + (extension.isEmpty() ? "" : "." + extension);
 
         Path target = uploadDir.resolve(storedFilename);
         Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
 
-        log.debug("Datei gespeichert: {}", storedFilename);
+        log.debug("File stored: {}", storedFilename);
         return storedFilename;
     }
 
     public Path load(String storedFilename) {
         Path file = uploadDir.resolve(storedFilename).normalize();
 
-        // Sicherstellen dass die Datei noch im uploadDir liegt (kein Path Traversal)
         if (!file.startsWith(uploadDir)) {
-            throw new SecurityException("Ungültiger Dateipfad");
+            throw new SecurityException("Invalid file path");
         }
         if (!Files.exists(file)) {
-            throw new ResourceNotFoundException("Datei nicht gefunden: " + storedFilename);
+            throw new ResourceNotFoundException("File not found: " + storedFilename);
         }
 
         return file;
@@ -51,10 +49,10 @@ public class StorageService {
     public void delete(String storedFilename) throws IOException {
         Path file = uploadDir.resolve(storedFilename).normalize();
         if (!file.startsWith(uploadDir)) {
-            throw new SecurityException("Ungültiger Dateipfad");
+            throw new SecurityException("Invalid file path");
         }
         Files.deleteIfExists(file);
-        log.debug("Datei gelöscht: {}", storedFilename);
+        log.debug("File deleted: {}", storedFilename);
     }
 
     private String getExtension(String filename) {

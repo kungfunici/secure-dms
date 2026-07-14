@@ -19,10 +19,7 @@ import java.util.concurrent.ConcurrentHashMap;
 @Component
 public class RateLimitFilter extends OncePerRequestFilter {
 
-    // Pro IP ein eigener Bucket
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
-
-    // Login-Endpoint: strenger limitiert
     private final Map<String, Bucket> loginBuckets = new ConcurrentHashMap<>();
 
     @Override
@@ -44,19 +41,17 @@ public class RateLimitFilter extends OncePerRequestFilter {
             response.setStatus(HttpStatus.TOO_MANY_REQUESTS.value());
             response.setContentType("application/json");
             response.getWriter().write("""
-                    {"status":429,"error":"Zu viele Anfragen, bitte warte kurz"}
+                    {"status":429,"error":"Too many requests, please wait"}
                     """);
         }
     }
 
-    // Login: max 10 Requests pro Minute
     private Bucket buildLoginBucket() {
         return Bucket.builder()
                 .addLimit(Bandwidth.classic(10, Refill.greedy(10, Duration.ofMinutes(1))))
                 .build();
     }
 
-    // API allgemein: max 100 Requests pro Minute
     private Bucket buildApiBucket() {
         return Bucket.builder()
                 .addLimit(Bandwidth.classic(100, Refill.greedy(100, Duration.ofMinutes(1))))

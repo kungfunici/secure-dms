@@ -32,17 +32,14 @@ public class PermissionService {
         User owner = getUser(ownerUsername);
         User target = getUser(targetUsername);
 
-        // Nur der Owner darf Permissions vergeben
         if (!doc.getOwner().getId().equals(owner.getId())) {
-            throw new AccessDeniedException("Nur der Owner kann Berechtigungen vergeben");
+            throw new AccessDeniedException("Only the owner can grant permissions");
         }
 
-        // Sich selbst berechtigen macht keinen Sinn
         if (owner.getId().equals(target.getId())) {
-            throw new IllegalArgumentException("Owner kann sich nicht selbst berechtigen");
+            throw new IllegalArgumentException("Owner cannot grant permissions to themselves");
         }
 
-        // Existiert schon eine Permission? → updaten
         doc.getPermissions().stream()
                 .filter(p -> p.getUser().getId().equals(target.getId()))
                 .findFirst()
@@ -58,10 +55,10 @@ public class PermissionService {
                 );
 
         documentRepository.save(doc);
-        log.info("Permission {} für {} auf Dokument {} vergeben", type, targetUsername, documentId);
+        log.info("Permission {} granted to {} on document {}", type, targetUsername, documentId);
 
         auditService.log("PERMISSION_GRANT", owner.getId(), documentId,
-                type + " für " + targetUsername, null);
+                type + " for " + targetUsername, null);
     }
 
     @Transactional
@@ -71,21 +68,21 @@ public class PermissionService {
         User target = getUser(targetUsername);
 
         if (!doc.getOwner().getId().equals(owner.getId())) {
-            throw new AccessDeniedException("Nur der Owner kann Berechtigungen entziehen");
+            throw new AccessDeniedException("Only the owner can revoke permissions");
         }
 
         boolean removed = doc.getPermissions()
                 .removeIf(p -> p.getUser().getId().equals(target.getId()));
 
         if (!removed) {
-            throw new ResourceNotFoundException("Keine Permission für " + targetUsername + " gefunden");
+            throw new ResourceNotFoundException("No permission found for " + targetUsername);
         }
 
         documentRepository.save(doc);
-        log.info("Permission für {} auf Dokument {} entzogen", targetUsername, documentId);
+        log.info("Permission revoked for {} on document {}", targetUsername, documentId);
 
         auditService.log("PERMISSION_REVOKE", owner.getId(), documentId,
-                "Entzogen für " + targetUsername, null);
+                "Revoked for " + targetUsername, null);
     }
 
     @Transactional(readOnly = true)
@@ -94,7 +91,7 @@ public class PermissionService {
         User owner = getUser(ownerUsername);
 
         if (!doc.getOwner().getId().equals(owner.getId())) {
-            throw new AccessDeniedException("Nur der Owner kann Berechtigungen einsehen");
+            throw new AccessDeniedException("Only the owner can view permissions");
         }
 
         return doc.getPermissions().stream()
@@ -105,7 +102,6 @@ public class PermissionService {
                 .toList();
     }
 
-    // Kleines Record als Antwort-Objekt — kein extra DTO nötig
     public record PermissionInfo(
             String username,
             DocumentPermission.PermissionType permissionType,
@@ -113,11 +109,11 @@ public class PermissionService {
 
     private Document getDocument(Long id) {
         return documentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Dokument nicht gefunden: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + id));
     }
 
     private User getUser(String username) {
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User nicht gefunden: " + username));
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
 }

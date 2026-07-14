@@ -17,7 +17,7 @@ public class AuditService {
     private final AuditLogRepository auditLogRepository;
     private final UserRepository userRepository;
 
-    // Nimmt userId als Long statt User-Entity — kein JPA-Session-Problem im Async-Thread
+    // Uses userId (Long) instead of User entity to avoid JPA session issues in async threads
     @Async
     public void log(String action, Long userId, Long documentId, String details, String ipAddress) {
         User user = userId != null ? userRepository.findById(userId).orElse(null) : null;

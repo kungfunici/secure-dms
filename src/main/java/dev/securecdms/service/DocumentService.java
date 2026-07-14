@@ -48,10 +48,45 @@ public class DocumentService {
                 .build();
 
         documentRepository.save(doc);
-        log.info("Dokument hochgeladen: {} von {}", file.getOriginalFilename(), username);
+        log.info("Document uploaded: {} by {}", file.getOriginalFilename(), username);
 
         auditService.log("UPLOAD", owner.getId(), doc.getId(),
-                "Hochgeladen: " + file.getOriginalFilename(), null);
+                "Uploaded: " + file.getOriginalFilename(), null);
+
+        return toResponse(doc);
+    }
+
+    @Transactional
+    public DocumentResponse update(Long documentId, String username, MultipartFile file, String description) throws IOException {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canWrite = hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+
+        if (!isOwner && !canWrite) {
+            throw new AccessDeniedException("Only the owner or a user with WRITE permission can update this document");
+        }
+
+        if (file != null && !file.isEmpty()) {
+            validateFileType(file);
+            storageService.delete(doc.getStoredFilename());
+            String newStoredFilename = storageService.store(file);
+            doc.setStoredFilename(newStoredFilename);
+            doc.setOriginalFilename(file.getOriginalFilename());
+            doc.setContentType(file.getContentType());
+            doc.setFileSize(file.getSize());
+        }
+
+        if (description != null) {
+            doc.setDescription(description);
+        }
+
+        documentRepository.save(doc);
+        log.info("Document updated: {} by {}", doc.getOriginalFilename(), username);
+
+        auditService.log("UPDATE", user.getId(), documentId,
+                "Updated: " + doc.getOriginalFilename(), null);
 
         return toResponse(doc);
     }
@@ -78,11 +113,11 @@ public class DocumentService {
                        || hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
 
         if (!isOwner && !canRead) {
-            throw new AccessDeniedException("Kein Zugriff auf Dokument " + documentId);
+            throw new AccessDeniedException("Access denied to document " + documentId);
         }
 
         auditService.log("DOWNLOAD", user.getId(), doc.getId(),
-                "Heruntergeladen: " + doc.getOriginalFilename(), null);
+                "Downloaded: " + doc.getOriginalFilename(), null);
 
         return new DownloadResult(
                 storageService.load(doc.getStoredFilename()),
@@ -104,16 +139,16 @@ public class DocumentService {
 
         boolean isOwner = doc.getOwner().getId().equals(user.getId());
         if (!isOwner && !hasPermission(doc, user, DocumentPermission.PermissionType.DELETE)) {
-            throw new AccessDeniedException("Nur der Owner oder ein User mit DELETE-Permission kann Dokumente löschen");
+            throw new AccessDeniedException("Only the owner or a user with DELETE permission can delete this document");
         }
 
         storageService.delete(doc.getStoredFilename());
         documentRepository.delete(doc);
 
         auditService.log("DELETE", user.getId(), documentId,
-                "Gelöscht: " + doc.getOriginalFilename(), null);
+                "Deleted: " + doc.getOriginalFilename(), null);
 
-        log.info("Dokument gelöscht: {} von {}", doc.getOriginalFilename(), username);
+        log.info("Document deleted: {} by {}", doc.getOriginalFilename(), username);
     }
 
     // ---- Helpers ----
@@ -136,7 +171,7 @@ public class DocumentService {
     private void validateFileType(MultipartFile file) {
         String contentType = file.getContentType();
         if (contentType == null || !ALLOWED_MIME_TYPES.contains(contentType.toLowerCase())) {
-            throw new IllegalArgumentException("Dateityp nicht erlaubt: " + contentType);
+            throw new IllegalArgumentException("File type not allowed: " + contentType);
         }
     }
 
@@ -148,12 +183,12 @@ public class DocumentService {
 
     private User getUser(String username) {
         return userRepository.findByUsername(username)
-                .orElseThrow(() -> new UsernameNotFoundException("User nicht gefunden: " + username));
+                .orElseThrow(() -> new UsernameNotFoundException("User not found: " + username));
     }
 
     private Document getDocument(Long id) {
         return documentRepository.findById(id)
-                .orElseThrow(() -> new ResourceNotFoundException("Dokument nicht gefunden: " + id));
+                .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + id));
     }
 
     private DocumentResponse toResponse(Document doc) {

@@ -35,6 +35,17 @@ public class DocumentController {
         return ResponseEntity.ok(response);
     }
 
+    @PutMapping(value = "/{id}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<DocumentResponse> update(
+            @PathVariable Long id,
+            @RequestParam(value = "file", required = false) MultipartFile file,
+            @RequestParam(value = "description", required = false) String description,
+            @AuthenticationPrincipal UserDetails userDetails) throws IOException {
+
+        DocumentResponse response = documentService.update(id, userDetails.getUsername(), file, description);
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping
     public ResponseEntity<Page<DocumentResponse>> listMyDocuments(
             @AuthenticationPrincipal UserDetails userDetails,

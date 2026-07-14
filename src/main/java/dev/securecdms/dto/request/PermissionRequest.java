@@ -9,8 +9,8 @@ import lombok.Data;
 public class PermissionRequest {
 
     @NotBlank
-    private String username;   // Wem wird Zugriff gewährt
+    private String username;
 
     @NotNull
-    private DocumentPermission.PermissionType permissionType;  // READ, WRITE, DELETE
+    private DocumentPermission.PermissionType permissionType;
 }

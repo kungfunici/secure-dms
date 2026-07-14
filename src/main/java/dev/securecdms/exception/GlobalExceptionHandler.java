@@ -25,12 +25,12 @@ public class GlobalExceptionHandler {
             String field = ((FieldError) error).getField();
             errors.put(field, error.getDefaultMessage());
         });
-        return buildResponse(HttpStatus.BAD_REQUEST, "Validierungsfehler", errors);
+        return buildResponse(HttpStatus.BAD_REQUEST, "Validation failed", errors);
     }
 
     @ExceptionHandler(BadCredentialsException.class)
     public ResponseEntity<Map<String, Object>> handleBadCredentials(BadCredentialsException ex) {
-        return buildResponse(HttpStatus.UNAUTHORIZED, "Ungültige Anmeldedaten", null);
+        return buildResponse(HttpStatus.UNAUTHORIZED, "Invalid credentials", null);
     }
 
     @ExceptionHandler(UsernameAlreadyExistsException.class)
@@ -45,7 +45,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(AccessDeniedException.class)
     public ResponseEntity<Map<String, Object>> handleAccessDenied(AccessDeniedException ex) {
-        return buildResponse(HttpStatus.FORBIDDEN, "Zugriff verweigert", null);
+        return buildResponse(HttpStatus.FORBIDDEN, "Access denied", null);
     }
 
     @ExceptionHandler(UsernameNotFoundException.class)
@@ -60,8 +60,8 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(Exception.class)
     public ResponseEntity<Map<String, Object>> handleGeneric(Exception ex) {
-        log.error("Unbehandelter Fehler: ", ex);
-        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Interner Serverfehler", null);
+        log.error("Unhandled exception: ", ex);
+        return buildResponse(HttpStatus.INTERNAL_SERVER_ERROR, "Internal server error", null);
     }
 
     private ResponseEntity<Map<String, Object>> buildResponse(HttpStatus status, String message, Object details) {
