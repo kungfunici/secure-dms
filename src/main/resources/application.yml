@@ -43,6 +43,15 @@ server:
     include-message: never
     include-stacktrace: never
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
 logging:
   level:
     dev.securecdms: DEBUG
