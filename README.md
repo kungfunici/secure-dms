@@ -2,10 +2,11 @@
 
 # 🔐 Secure Document Management System
 
-**A production-ready REST API for secure document storage, access control, and audit logging.**
+**Full-stack document storage with granular permissions, audit logging, and a React frontend.**
 
 ![Java](https://img.shields.io/badge/Java-21-orange?style=flat-square&logo=openjdk)
 ![Spring Boot](https://img.shields.io/badge/Spring%20Boot-3.2.5-6DB33F?style=flat-square&logo=springboot)
+![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react)
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-4169E1?style=flat-square&logo=postgresql)
 ![JWT](https://img.shields.io/badge/Auth-JWT-black?style=flat-square&logo=jsonwebtokens)
 ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?style=flat-square&logo=docker)
@@ -14,220 +15,181 @@
 
 ---
 
-## 📋 Overview
+## Features
 
-Secure DMS is a backend REST API for managing documents with fine-grained access control. Users can upload files, share them with specific permissions, and every action is tracked in an immutable audit log.
-
-Built with security as a first-class citizen — not bolted on afterward.
+- **JWT Auth** – HS384-signed tokens, 24h expiry, refresh tokens
+- **File Upload/Download** – Multipart, UUID-based storage, path traversal prevention
+- **Permissions** – Per-document READ/WRITE grants by user ID
+- **Folders** – Organize documents into folders
+- **Shared views** – "Shared with me" and "Shared by me" tabs
+- **User Profiles** – Avatar upload, account deletion
+- **Audit Logging** – Every action logged asynchronously
+- **Rate Limiting** – 10 req/min login, 100 req/min API (Bucket4j, per IP)
+- **Password Security** – BCrypt cost factor 12
+- **DB Migrations** – Flyway versioned
+- **Frontend** – React 19, TypeScript, shadcn/ui, Tailwind 4, react-router-dom
 
 ---
 
-## ✨ Features
+## Tech Stack
 
-| Feature | Details |
+| Layer | Tech |
 |---|---|
-| **JWT Authentication** | Stateless, HS384-signed tokens, 24h expiry |
-| **File Upload & Download** | Multipart upload, UUID-based storage (no path traversal) |
-| **Permission System** | Per-document READ / WRITE / DELETE grants |
-| **Audit Logging** | Every action logged asynchronously with IP + timestamp |
-| **Rate Limiting** | 10 req/min on login, 100 req/min on API (per IP, Bucket4j) |
-| **Password Security** | BCrypt with cost factor 12 |
-| **SQL Injection Prevention** | JPA + parameterized queries throughout |
-| **DB Migrations** | Flyway versioned migrations |
+| Runtime | Java 21 |
+| Backend | Spring Boot 3.2.5 (Web, Security, Data JPA, Validation) |
+| Database | PostgreSQL 16 (Docker) |
+| Auth | jjwt 0.12.5 |
+| Rate Limiting | Bucket4j 8.10.1 |
+| Migrations | Flyway |
+| Frontend | React 19, TypeScript, Vite 8, Tailwind 4, shadcn/ui |
+| Build | Maven (Maven Wrapper included) |
 
 ---
 
-## 🛠️ Tech Stack
-
-- **Runtime:** Java 21
-- **Framework:** Spring Boot 3.2.5 (Web, Security, Data JPA, Validation)
-- **Database:** PostgreSQL 16
-- **Auth:** jjwt 0.12.5
-- **Rate Limiting:** Bucket4j 8.10.1
-- **Migrations:** Flyway
-- **Build:** Maven
-
----
-
-## 🚀 Getting Started
-
-### Prerequisites
-
-- Java 21
-- Docker & Docker Compose
-- Maven (or use IntelliJ's built-in)
-
-### 1. Clone the repo
+## Getting Started
 
 ```bash
+# 1. Clone
 git clone https://github.com/KungFuNici/secure-dms.git
 cd secure-dms
+
+# 2. Start PostgreSQL
+docker compose up -d
+
+# 3. Run backend
+./mvnw spring-boot:run
+
+# 4. Run frontend (separate terminal)
+cd frontend
+npm install
+npm run dev
 ```
 
-### 2. Start PostgreSQL
+Backend: `http://localhost:8080` | Frontend: `http://localhost:5173`
 
-```bash
-docker-compose up -d
-```
-
-### 3. Run the app
-
-```bash
-mvn spring-boot:run
-```
-
-The API is now live at `http://localhost:8080`.
-
-> **Note:** Uploaded files are stored in `./uploads/` by default. Override with the `UPLOAD_DIR` environment variable.
+> **Note:** Default upload dir is `./uploads/`. Override with `UPLOAD_DIR` env var.  
+> **Note:** Docker PostgreSQL runs on port **5433** to avoid conflicts with native PostgreSQL installs.
 
 ---
 
-## 📡 API Reference
+## API Overview
+
+All document/user endpoints require `Authorization: Bearer <token>`.
 
 ### Auth
 
-```http
-POST /api/auth/register
-Content-Type: application/json
-
-{
-  "username": "niclas",
-  "email": "kungfunici@users.noreply.github.com",
-  "password": "supersecret"
-}
-```
-
-```http
-POST /api/auth/login
-Content-Type: application/json
-
-{
-  "username": "niclas",
-  "password": "supersecret"
-}
-```
-
-Both return:
-```json
-{
-  "token": "eyJ...",
-  "tokenType": "Bearer",
-  "username": "niclas",
-  "role": "ROLE_USER"
-}
-```
-
----
+| Method | Endpoint | Body |
+|---|---|---|
+| `POST` | `/api/auth/register` | `{ username, email, password }` |
+| `POST` | `/api/auth/login` | `{ username, password }` |
+| `POST` | `/api/auth/refresh` | `{ refreshToken }` |
 
 ### Documents
 
-All document endpoints require `Authorization: Bearer <token>`.
-
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/documents/upload` | Upload a file (multipart) |
-| `GET` | `/api/documents` | List your documents (paginated) |
-| `GET` | `/api/documents/search?q=term` | Search by filename or description |
-| `GET` | `/api/documents/{id}/download` | Download a file |
-| `DELETE` | `/api/documents/{id}` | Delete a file (owner only) |
-
-**Upload example:**
-```http
-POST /api/documents/upload
-Authorization: Bearer eyJ...
-Content-Type: multipart/form-data
-
-file=@report.pdf
-description=Q2 Financial Report
-```
-
----
+| `POST` | `/api/documents/upload` | Upload (multipart: `file`, `description`, `folderId?`) |
+| `GET` | `/api/documents` | My documents (paginated) |
+| `GET` | `/api/documents/search?q=` | Search owned + shared |
+| `GET` | `/api/documents/shared-with-me` | Documents shared with me |
+| `GET` | `/api/documents/shared-by-me` | My documents I've shared |
+| `GET` | `/api/documents/{id}/download` | Download file |
+| `PUT` | `/api/documents/{id}` | Update file/description (multipart) |
+| `PATCH` | `/api/documents/{id}/move?folderId=` | Move to folder (omit to remove from folder) |
+| `DELETE` | `/api/documents/{id}` | Owner: delete permanently; non-owner: remove own access |
 
 ### Permissions
 
-Share documents with other users.
+| Method | Endpoint | Body |
+|---|---|---|
+| `GET` | `/api/documents/{id}/permissions` | List (owner only) |
+| `POST` | `/api/documents/{id}/permissions` | `{ userId, permissionType: "READ"\|"WRITE" }` |
+| `DELETE` | `/api/documents/{id}/permissions/{userId}` | Revoke |
+
+### Folders
+
+| Method | Endpoint | Body |
+|---|---|---|
+| `GET` | `/api/folders` | List my folders |
+| `POST` | `/api/folders` | `{ name }` |
+| `PUT` | `/api/folders/{id}` | Rename: `{ name }` |
+| `DELETE` | `/api/folders/{id}` | Delete (documents get folder_id = null) |
+
+### Users
 
 | Method | Endpoint | Description |
 |---|---|---|
-| `POST` | `/api/documents/{id}/permissions` | Grant permission |
-| `GET` | `/api/documents/{id}/permissions` | List permissions (owner only) |
-| `DELETE` | `/api/documents/{id}/permissions/{username}` | Revoke permission |
+| `GET` | `/api/users/{id}` | Profile |
+| `GET` | `/api/users/{id}/avatar` | Avatar image (returns 404 if none) |
+| `PUT` | `/api/users/{id}` | Update avatar (multipart: `avatar`) |
+| `DELETE` | `/api/users/{id}` | Delete account (clears all data) |
+| `GET` | `/api/users/search?q=` | Search users by username |
 
-**Grant example:**
+### Example: Grant permission
+
 ```http
 POST /api/documents/1/permissions
 Authorization: Bearer eyJ...
 Content-Type: application/json
 
-{
-  "username": "other-user",
-  "permissionType": "READ"
-}
+{ "userId": 2, "permissionType": "WRITE" }
 ```
 
-Permission types: `READ`, `WRITE`, `DELETE`
+Response includes `permission` field (`OWNER`/`WRITE`/`READ`) in every document object.
 
 ---
 
-## 🗄️ Database Schema
+## Database Schema
 
 ```
-users
- └── documents (owner_id → users.id)
-      └── document_permissions (document_id, user_id)
-audit_logs (user_id → users.id, soft ref to document_id)
+users (id, username, email, password_hash, role, profile_picture, enabled, created_at, updated_at)
+ └── documents (id, owner_id → users, folder_id → folders, original_filename, stored_filename, ...)
+ │    └── document_permissions (id, document_id → documents, user_id → users, permission_type, granted_at)
+ ├── folders (id, name, owner_id → users, created_at, updated_at)
+ └── audit_logs (id, user_id → users, document_id?, action, details, ip_address, timestamp)
 ```
 
 ---
 
-## 🔒 Security Notes
+## Project Structure
 
-- Passwords are hashed with **BCrypt (cost 12)** — never stored in plain text
-- JWT secret is configurable via `JWT_SECRET` environment variable — change this in production
-- File storage uses **UUID-based filenames** — original filenames are stored in the DB only, preventing path traversal attacks
-- Rate limiting is applied **before** JWT validation — unauthenticated brute-force attempts are blocked
-- Error responses are deliberately generic on auth failures to prevent username enumeration
+```
+├── src/main/java/dev/securecdms/
+│   ├── controller/        # REST endpoints (Auth, Document, Folder, Permission, User)
+│   ├── service/           # Business logic
+│   ├── repository/        # JPA repositories
+│   ├── model/             # JPA entities
+│   ├── dto/               # Request & response DTOs
+│   ├── security/          # JWT utils, filters, rate limiter
+│   ├── config/            # Spring Security, CORS, CSP
+│   └── exception/         # Global error handler
+├── src/main/resources/db/migration/  # Flyway SQL migrations
+├── frontend/
+│   └── src/
+│       ├── pages/         # LoginPage, Dashboard, ProfilePage
+│       ├── contexts/      # AuthContext
+│       ├── lib/           # api.ts (all HTTP calls)
+│       └── components/    # shadcn/ui components
+└── docker-compose.yml
+```
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `JWT_SECRET` | `changeme-...` | JWT signing secret (min. 32 chars) |
+| `JWT_SECRET` | `changeme-...` | JWT signing secret (min 32 chars) |
 | `UPLOAD_DIR` | `./uploads` | File storage directory |
-| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5432/secure_dms` | DB connection |
+| `SPRING_DATASOURCE_URL` | `jdbc:postgresql://localhost:5433/secure_dms` | DB (port 5433) |
 
 ---
 
-## 📁 Project Structure
+## Running Tests
 
-```
-src/main/java/dev/securecdms/
-├── controller/        # REST endpoints
-├── service/           # Business logic
-├── repository/        # JPA repositories
-├── model/             # JPA entities
-├── dto/               # Request & response objects
-├── security/          # JWT utils, filters
-├── config/            # Spring Security config
-└── exception/         # Global error handling
+```bash
+./mvnw test
 ```
 
----
+Uses H2 in-memory database with `@ActiveProfiles("test")` (Flyway disabled). Currently **68 tests** across controllers, services, and integration.
 
-## 🧭 Roadmap
-
-- [ ] React frontend
-- [ ] Refresh token support
-- [ ] File type validation & virus scanning
-- [ ] Admin dashboard (audit log viewer)
-- [ ] Docker image & CI/CD pipeline
-
----
-
-<div align="center">
-
-Built with ❤️ by [KungFuNici](https://github.com/KungFuNici)
-
-</div>

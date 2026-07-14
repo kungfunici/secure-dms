@@ -94,6 +94,7 @@ public class AuthService {
         String newToken = jwtUtils.generateToken(userDetails);
 
         return AuthResponse.builder()
+                .id(user.getId())
                 .token(newToken)
                 .refreshToken(refreshToken)
                 .tokenType("Bearer")
@@ -140,6 +141,7 @@ public class AuthService {
         String refreshToken = jwtUtils.generateRefreshToken(userDetails);
 
         return AuthResponse.builder()
+                .id(user.getId())
                 .token(accessToken)
                 .refreshToken(refreshToken)
                 .tokenType("Bearer")

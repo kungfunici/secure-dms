@@ -14,6 +14,7 @@ public class DocumentResponse {
     private Long fileSize;
     private String description;
     private String ownerUsername;
+    private String permission;
     private Long folderId;
     private String folderName;
     private Instant uploadedAt;

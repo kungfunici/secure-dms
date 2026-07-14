@@ -66,7 +66,7 @@ public class DocumentService {
         auditService.log("UPLOAD", owner.getId(), doc.getId(),
                 "Uploaded: " + file.getOriginalFilename(), null);
 
-        return toResponse(doc);
+        return toResponse(doc, owner);
     }
 
     @Transactional
@@ -101,19 +101,43 @@ public class DocumentService {
         auditService.log("UPDATE", user.getId(), documentId,
                 "Updated: " + doc.getOriginalFilename(), null);
 
-        return toResponse(doc);
+        return toResponse(doc, user);
+    }
+
+    @Transactional
+    public DocumentResponse moveToFolder(Long documentId, Long folderId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (!doc.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("Only the owner can move this document");
+        }
+
+        if (folderId != null) {
+            Folder folder = folderRepository.findById(folderId)
+                    .orElseThrow(() -> new ResourceNotFoundException("Folder not found: " + folderId));
+            if (!folder.getOwner().getId().equals(user.getId())) {
+                throw new AccessDeniedException("Access denied to folder");
+            }
+            doc.setFolder(folder);
+        } else {
+            doc.setFolder(null);
+        }
+
+        documentRepository.save(doc);
+        return toResponse(doc, user);
     }
 
     @Transactional(readOnly = true)
     public Page<DocumentResponse> listMyDocuments(String username, Pageable pageable) {
         User owner = getUser(username);
-        return documentRepository.findByOwner(owner, pageable).map(this::toResponse);
+        return documentRepository.findByOwner(owner, pageable).map(d -> toResponse(d, owner));
     }
 
     @Transactional(readOnly = true)
     public Page<DocumentResponse> search(String username, String query, Pageable pageable) {
         User user = getUser(username);
-        return documentRepository.searchOwnedAndShared(user, query, pageable).map(this::toResponse);
+        return documentRepository.searchOwnedAndShared(user, query, pageable).map(d -> toResponse(d, user));
     }
 
     @Transactional(readOnly = true)
@@ -140,9 +164,15 @@ public class DocumentService {
     public record DownloadResult(Path path, String originalFilename) {}
 
     @Transactional(readOnly = true)
-    public Page<DocumentResponse> listSharedDocuments(String username, Pageable pageable) {
+    public Page<DocumentResponse> listSharedWithMe(String username, Pageable pageable) {
         User user = getUser(username);
-        return documentRepository.findSharedWithUser(user, pageable).map(this::toResponse);
+        return documentRepository.findSharedWithUser(user, pageable).map(d -> toResponse(d, user));
+    }
+
+    @Transactional(readOnly = true)
+    public Page<DocumentResponse> listSharedByMe(String username, Pageable pageable) {
+        User user = getUser(username);
+        return documentRepository.findSharedByOwner(user, pageable).map(d -> toResponse(d, user));
     }
 
     @Transactional
@@ -194,6 +224,13 @@ public class DocumentService {
         }
     }
 
+    private String resolvePermission(Document doc, User user) {
+        if (doc.getOwner().getId().equals(user.getId())) return "OWNER";
+        if (hasPermission(doc, user, DocumentPermission.PermissionType.WRITE)) return "WRITE";
+        if (hasPermission(doc, user, DocumentPermission.PermissionType.READ)) return "READ";
+        return null;
+    }
+
     private boolean hasPermission(Document doc, User user, DocumentPermission.PermissionType type) {
         return doc.getPermissions().stream()
                 .anyMatch(p -> p.getUser().getId().equals(user.getId())
@@ -210,7 +247,7 @@ public class DocumentService {
                 .orElseThrow(() -> new ResourceNotFoundException("Document not found: " + id));
     }
 
-    private DocumentResponse toResponse(Document doc) {
+    private DocumentResponse toResponse(Document doc, User user) {
         DocumentResponse.DocumentResponseBuilder builder = DocumentResponse.builder()
                 .id(doc.getId())
                 .originalFilename(doc.getOriginalFilename())
@@ -218,6 +255,7 @@ public class DocumentService {
                 .fileSize(doc.getFileSize())
                 .description(doc.getDescription())
                 .ownerUsername(doc.getOwner().getUsername())
+                .permission(resolvePermission(doc, user))
                 .uploadedAt(doc.getUploadedAt());
         if (doc.getFolder() != null) {
             builder.folderId(doc.getFolder().getId());

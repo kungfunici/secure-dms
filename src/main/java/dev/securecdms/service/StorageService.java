@@ -33,6 +33,13 @@ public class StorageService {
         return storedFilename;
     }
 
+    public String storeWithName(MultipartFile file, String storedFilename) throws IOException {
+        Path target = uploadDir.resolve(storedFilename);
+        Files.copy(file.getInputStream(), target, StandardCopyOption.REPLACE_EXISTING);
+        log.debug("File stored with custom name: {}", storedFilename);
+        return storedFilename;
+    }
+
     public Path load(String storedFilename) {
         Path file = uploadDir.resolve(storedFilename).normalize();
 

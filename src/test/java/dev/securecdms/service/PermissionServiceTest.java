@@ -45,9 +45,9 @@ class PermissionServiceTest {
                 .id(1L).owner(owner).permissions(new ArrayList<>()).build();
     }
 
-    private ShareRequest shareReq(String username, String type) {
+    private ShareRequest shareReq(Long userId, String type) {
         ShareRequest r = new ShareRequest();
-        r.setUsername(username);
+        r.setUserId(userId);
         r.setPermissionType(type);
         return r;
     }
@@ -55,11 +55,11 @@ class PermissionServiceTest {
     @Test
     void grant_shouldAddNewPermission() {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
-        when(userRepository.findByUsername("target")).thenReturn(Optional.of(targetUser));
+        when(userRepository.findById(2L)).thenReturn(Optional.of(targetUser));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
         when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
-        permissionService.grant(1L, shareReq("target", "READ"), "owner");
+        permissionService.grant(1L, shareReq(2L, "READ"), "owner");
 
         assertEquals(1, document.getPermissions().size());
         assertEquals(DocumentPermission.PermissionType.READ, document.getPermissions().getFirst().getPermissionType());
@@ -73,16 +73,17 @@ class PermissionServiceTest {
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(AccessDeniedException.class,
-                () -> permissionService.grant(1L, shareReq("target", "READ"), "stranger"));
+                () -> permissionService.grant(1L, shareReq(2L, "READ"), "stranger"));
     }
 
     @Test
     void grant_shouldDenySelfGrant() {
         when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(userRepository.findById(1L)).thenReturn(Optional.of(owner));
         when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
 
         assertThrows(IllegalArgumentException.class,
-                () -> permissionService.grant(1L, shareReq("owner", "READ"), "owner"));
+                () -> permissionService.grant(1L, shareReq(1L, "READ"), "owner"));
     }
 
     @Test

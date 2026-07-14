@@ -1,8 +1,14 @@
 import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import { auth, setToken, type AuthResponse } from '@/lib/api'
 
+interface UserData {
+  id: number
+  username: string
+  role: string
+}
+
 interface AuthContextType {
-  user: { username: string; role: string } | null
+  user: UserData | null
   login: (username: string, password: string) => Promise<void>
   register: (username: string, email: string, password: string) => Promise<void>
   logout: () => void
@@ -11,7 +17,7 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | null>(null)
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [user, setUser] = useState<{ username: string; role: string } | null>(() => {
+  const [user, setUser] = useState<UserData | null>(() => {
     const stored = sessionStorage.getItem('user')
     const token = sessionStorage.getItem('token')
     if (stored && token) {
@@ -24,7 +30,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const login = useCallback(async (username: string, password: string) => {
     const res = (await auth.login(username, password)) as AuthResponse
     setToken(res.token)
-    const userData = { username: res.username, role: res.role }
+    const userData = { id: res.id, username: res.username, role: res.role }
     sessionStorage.setItem('token', res.token)
     sessionStorage.setItem('user', JSON.stringify(userData))
     setUser(userData)
@@ -33,7 +39,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const register = useCallback(async (username: string, email: string, password: string) => {
     const res = (await auth.register(username, email, password)) as AuthResponse
     setToken(res.token)
-    const userData = { username: res.username, role: res.role }
+    const userData = { id: res.id, username: res.username, role: res.role }
     sessionStorage.setItem('token', res.token)
     sessionStorage.setItem('user', JSON.stringify(userData))
     setUser(userData)

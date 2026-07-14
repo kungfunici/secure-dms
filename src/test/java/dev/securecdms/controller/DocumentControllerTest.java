@@ -136,13 +136,35 @@ class DocumentControllerTest {
 
     @Test
     @WithMockUser
-    void shared_shouldReturnPage() throws Exception {
-        when(documentService.listSharedDocuments(anyString(), any(Pageable.class)))
+    void sharedWithMe_shouldReturnPage() throws Exception {
+        when(documentService.listSharedWithMe(anyString(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(docResponse)));
 
-        mockMvc.perform(get("/api/documents/shared"))
+        mockMvc.perform(get("/api/documents/shared-with-me"))
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.content[0].originalFilename").value("test.pdf"));
+    }
+
+    @Test
+    @WithMockUser
+    void sharedByMe_shouldReturnPage() throws Exception {
+        when(documentService.listSharedByMe(anyString(), any(Pageable.class)))
+                .thenReturn(new PageImpl<>(List.of(docResponse)));
+
+        mockMvc.perform(get("/api/documents/shared-by-me"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.content[0].originalFilename").value("test.pdf"));
+    }
+
+    @Test
+    @WithMockUser
+    void moveToFolder_shouldReturnUpdated() throws Exception {
+        when(documentService.moveToFolder(eq(1L), eq(2L), anyString()))
+                .thenReturn(docResponse);
+
+        mockMvc.perform(patch("/api/documents/1/move?folderId=2").with(csrf()))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.originalFilename").value("test.pdf"));
     }
 
     @Test

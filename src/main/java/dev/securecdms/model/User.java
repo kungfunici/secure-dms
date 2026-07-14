@@ -36,6 +36,9 @@ public class User {
     @Column(nullable = false)
     private Role role;
 
+    @Column(length = 255)
+    private String profilePicture;
+
     @Column(nullable = false)
     @Builder.Default
     private boolean enabled = true;

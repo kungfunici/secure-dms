@@ -31,6 +31,7 @@ async function request(path: string, options: RequestInit = {}) {
 }
 
 export interface AuthResponse {
+  id: number
   token: string
   refreshToken?: string
   tokenType: string
@@ -45,6 +46,7 @@ export interface DocumentResponse {
   fileSize: number
   description: string
   ownerUsername: string
+  permission?: string
   folderId?: number
   folderName?: string
   uploadedAt: string
@@ -63,6 +65,14 @@ export interface PermissionResponse {
   username: string
   permissionType: string
   grantedAt: string
+}
+
+export interface UserResponse {
+  id: number
+  username: string
+  email: string
+  profilePicture: string | null
+  createdAt: string
 }
 
 export interface PageResponse<T> {
@@ -93,6 +103,37 @@ export const auth = {
     }) as Promise<AuthResponse>,
 }
 
+export const users = {
+  getProfile: (id: number) =>
+    request(`/api/users/${id}`) as Promise<UserResponse>,
+
+  updateProfile: (id: number, avatar: File) => {
+    const formData = new FormData()
+    formData.append('avatar', avatar)
+    const headers: Record<string, string> = {}
+    if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`
+    return fetch(`${API_BASE}/api/users/${id}`, {
+      method: 'PUT',
+      headers,
+      body: formData,
+    }).then(async (res) => {
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({ error: res.statusText }))
+        throw new Error(body.error || 'Update failed')
+      }
+      return res.json() as Promise<UserResponse>
+    })
+  },
+
+  deleteAccount: (id: number) =>
+    request(`/api/users/${id}`, { method: 'DELETE' }) as Promise<void>,
+
+  search: (q: string) =>
+    request(`/api/users/search?q=${encodeURIComponent(q)}`) as Promise<UserResponse[]>,
+
+  avatarUrl: (id: number) => `${API_BASE}/api/users/${id}/avatar`,
+}
+
 export const folders = {
   list: () =>
     request('/api/folders') as Promise<FolderResponse[]>,
@@ -120,8 +161,17 @@ export const documents = {
   search: (q: string, page = 0, size = 50) =>
     request(`/api/documents/search?q=${encodeURIComponent(q)}&page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
 
-  shared: (page = 0, size = 50) =>
-    request(`/api/documents/shared?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+  sharedWithMe: (page = 0, size = 50) =>
+    request(`/api/documents/shared-with-me?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+
+  sharedByMe: (page = 0, size = 50) =>
+    request(`/api/documents/shared-by-me?page=${page}&size=${size}`) as Promise<PageResponse<DocumentResponse>>,
+
+  moveToFolder: (id: number, folderId: number | null) => {
+    let path = `/api/documents/${id}/move`
+    if (folderId !== null) path += `?folderId=${folderId}`
+    return request(path, { method: 'PATCH' }) as Promise<DocumentResponse>
+  },
 
   upload: (file: File, description: string, folderId?: number) => {
     const formData = new FormData()
@@ -189,10 +239,10 @@ export const documents = {
     list: (docId: number) =>
       request(`/api/documents/${docId}/permissions`) as Promise<PermissionResponse[]>,
 
-    grant: (docId: number, username: string, permissionType: string) =>
+    grant: (docId: number, userId: number, permissionType: string) =>
       request(`/api/documents/${docId}/permissions`, {
         method: 'POST',
-        body: JSON.stringify({ username, permissionType }),
+        body: JSON.stringify({ userId, permissionType }),
       }) as Promise<PermissionResponse>,
 
     revoke: (docId: number, userId: number) =>

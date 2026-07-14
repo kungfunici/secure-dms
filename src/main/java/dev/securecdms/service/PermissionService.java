@@ -34,8 +34,8 @@ public class PermissionService {
             throw new AccessDeniedException("Only the owner can share this document");
         }
 
-        User targetUser = userRepository.findByUsername(request.getUsername())
-                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + request.getUsername()));
+        User targetUser = userRepository.findById(request.getUserId())
+                .orElseThrow(() -> new ResourceNotFoundException("User not found: " + request.getUserId()));
 
         if (targetUser.getId().equals(owner.getId())) {
             throw new IllegalArgumentException("Cannot share document with yourself");

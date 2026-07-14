@@ -47,6 +47,16 @@ public class DocumentController {
         return ResponseEntity.ok(response);
     }
 
+    @PatchMapping("/{id}/move")
+    public ResponseEntity<DocumentResponse> moveToFolder(
+            @PathVariable Long id,
+            @RequestParam(value = "folderId", required = false) Long folderId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        DocumentResponse response = documentService.moveToFolder(id, folderId, userDetails.getUsername());
+        return ResponseEntity.ok(response);
+    }
+
     @GetMapping
     public ResponseEntity<Page<DocumentResponse>> listMyDocuments(
             @AuthenticationPrincipal UserDetails userDetails,
@@ -79,13 +89,22 @@ public class DocumentController {
                 .body(resource);
     }
 
-    @GetMapping("/shared")
-    public ResponseEntity<Page<DocumentResponse>> listSharedDocuments(
+    @GetMapping("/shared-with-me")
+    public ResponseEntity<Page<DocumentResponse>> listSharedWithMe(
             @AuthenticationPrincipal UserDetails userDetails,
             Pageable pageable) {
 
         return ResponseEntity.ok(
-                documentService.listSharedDocuments(userDetails.getUsername(), pageable));
+                documentService.listSharedWithMe(userDetails.getUsername(), pageable));
+    }
+
+    @GetMapping("/shared-by-me")
+    public ResponseEntity<Page<DocumentResponse>> listSharedByMe(
+            @AuthenticationPrincipal UserDetails userDetails,
+            Pageable pageable) {
+
+        return ResponseEntity.ok(
+                documentService.listSharedByMe(userDetails.getUsername(), pageable));
     }
 
     @DeleteMapping("/{id}")

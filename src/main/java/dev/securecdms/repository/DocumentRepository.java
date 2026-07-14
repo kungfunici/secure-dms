@@ -39,6 +39,20 @@ public interface DocumentRepository extends JpaRepository<Document, Long> {
     Page<Document> findSharedWithUser(@Param("user") User user, Pageable pageable);
 
     @Query("""
+        SELECT d FROM Document d
+        JOIN d.permissions p
+        WHERE p.user = :user
+        """)
+    List<Document> findSharedWithUserList(@Param("user") User user);
+
+    @Query("""
+        SELECT DISTINCT d FROM Document d
+        WHERE d.owner = :owner
+          AND d.permissions IS NOT EMPTY
+        """)
+    Page<Document> findSharedByOwner(@Param("owner") User owner, Pageable pageable);
+
+    @Query("""
         SELECT DISTINCT d FROM Document d
         LEFT JOIN d.permissions p
         WHERE (d.owner = :user OR p.user = :user)
