@@ -1,7 +1,3 @@
--- ============================================================
--- V1: Initial Schema für Secure DMS
--- ============================================================
-
 CREATE TABLE users (
     id            BIGSERIAL PRIMARY KEY,
     username      VARCHAR(50)  NOT NULL UNIQUE,
@@ -15,8 +11,6 @@ CREATE TABLE users (
 
 CREATE INDEX idx_users_username ON users(username);
 CREATE INDEX idx_users_email    ON users(email);
-
--- -------------------------------------------------------
 
 CREATE TABLE documents (
     id                BIGSERIAL PRIMARY KEY,
@@ -33,8 +27,6 @@ CREATE TABLE documents (
 CREATE INDEX idx_documents_owner    ON documents(owner_id);
 CREATE INDEX idx_documents_filename ON documents(original_filename);
 
--- -------------------------------------------------------
-
 CREATE TABLE document_permissions (
     id              BIGSERIAL PRIMARY KEY,
     document_id     BIGINT      NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
@@ -47,13 +39,11 @@ CREATE TABLE document_permissions (
 CREATE INDEX idx_permissions_document ON document_permissions(document_id);
 CREATE INDEX idx_permissions_user     ON document_permissions(user_id);
 
--- -------------------------------------------------------
-
 CREATE TABLE audit_logs (
     id          BIGSERIAL PRIMARY KEY,
     action      VARCHAR(50)  NOT NULL,
     user_id     BIGINT       REFERENCES users(id) ON DELETE SET NULL,
-    document_id BIGINT,                          -- soft reference, kein FK (Dokument kann gelöscht sein)
+    document_id BIGINT,
     details     VARCHAR(500),
     ip_address  VARCHAR(45),
     timestamp   TIMESTAMPTZ  NOT NULL DEFAULT NOW()
