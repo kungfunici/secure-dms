@@ -32,3 +32,9 @@ bin/
 /.idea/
 /target/
 /test.http
+/uploads/
+target/
+uploads/
+*.env
+.idea/
+*.iml

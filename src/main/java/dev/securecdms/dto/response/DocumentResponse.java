@@ -1,0 +1,18 @@
+package dev.securecdms.dto.response;
+
+import lombok.Builder;
+import lombok.Data;
+
+import java.time.Instant;
+
+@Data
+@Builder
+public class DocumentResponse {
+    private Long id;
+    private String originalFilename;
+    private String contentType;
+    private Long fileSize;
+    private String description;
+    private String ownerUsername;
+    private Instant uploadedAt;
+}

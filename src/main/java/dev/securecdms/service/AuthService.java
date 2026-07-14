@@ -4,7 +4,6 @@ import dev.securecdms.dto.request.LoginRequest;
 import dev.securecdms.dto.request.RegisterRequest;
 import dev.securecdms.dto.response.AuthResponse;
 import dev.securecdms.exception.UsernameAlreadyExistsException;
-import dev.securecdms.model.AuditLog;
 import dev.securecdms.model.Role;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.UserRepository;
@@ -47,11 +46,9 @@ public class AuthService {
         userRepository.save(user);
         log.info("Neuer User registriert: {}", user.getUsername());
 
-        auditService.log(AuditLog.builder()
-                .action("REGISTER")
-                .user(user)
-                .details("User registriert: " + user.getUsername())
-                .build());
+        // userId als Long übergeben, nicht die Entity
+        auditService.log("REGISTER", user.getId(), null,
+                "User registriert: " + user.getUsername(), null);
 
         Authentication auth = authenticationManager.authenticate(
                 new UsernamePasswordAuthenticationToken(request.getUsername(), request.getPassword()));
@@ -71,10 +68,9 @@ public class AuthService {
         String token = jwtUtils.generateToken(userDetails);
         User user = userRepository.findByUsername(request.getUsername()).orElseThrow();
 
-        auditService.log(AuditLog.builder()
-                .action("LOGIN").user(user)
-                .ipAddress(ipAddress).details("Erfolgreich eingeloggt")
-                .build());
+        // userId als Long übergeben, nicht die Entity
+        auditService.log("LOGIN", user.getId(), null,
+                "Erfolgreich eingeloggt", ipAddress);
 
         return AuthResponse.builder()
                 .token(token).tokenType("Bearer")
