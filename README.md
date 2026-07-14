@@ -92,7 +92,7 @@ Content-Type: application/json
 
 {
   "username": "niclas",
-  "email": "niclas@example.com",
+  "email": "kungfunici@users.noreply.github.com",
   "password": "supersecret"
 }
 ```
@@ -228,6 +228,6 @@ src/main/java/dev/securecdms/
 
 <div align="center">
 
-Built by [KungFuNici](https://github.com/KungFuNici)
+Built with ❤️ by [KungFuNici](https://github.com/KungFuNici)
 
 </div>
