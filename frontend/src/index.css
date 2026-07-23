@@ -1,6 +1,7 @@
 @import "tailwindcss";
 
 @plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -107,3 +108,50 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* LibreOffice-converted HTML: scale down oversized content */
+.prose-lo {
+  max-width: 100%;
+  overflow-x: auto;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+.prose-lo p,
+.prose-lo li,
+.prose-lo td,
+.prose-lo th,
+.prose-lo div:not([style*="position"]) {
+  line-height: 1.5 !important;
+}
+.prose-lo table {
+  border-collapse: collapse;
+  max-width: 100%;
+  font-size: 0.8rem;
+}
+.prose-lo td,
+.prose-lo th {
+  padding: 4px 10px !important;
+  border: 1px solid #d1d5db;
+  vertical-align: top;
+}
+.prose-lo img {
+  max-width: 100%;
+  height: auto;
+}
+.prose-lo body {
+  margin: 0 !important;
+  padding: 8px !important;
+  background: transparent !important;
+}
+/* Preserve heading hierarchy but scale down oversized LO fonts */
+.prose-lo h1 { font-size: 1.4em !important; margin: 0.6em 0 0.3em !important; }
+.prose-lo h2 { font-size: 1.2em !important; margin: 0.5em 0 0.25em !important; }
+.prose-lo h3 { font-size: 1.05em !important; margin: 0.4em 0 0.2em !important; }
+
+/* Ensure headings/lists are visible in the editor */
+.ProseMirror h1 { font-size: 1.8em; font-weight: 700; margin: 0.5em 0; }
+.ProseMirror h2 { font-size: 1.4em; font-weight: 600; margin: 0.5em 0; }
+.ProseMirror h3 { font-size: 1.15em; font-weight: 600; margin: 0.5em 0; }
+.ProseMirror ul, .ProseMirror ol { padding-left: 1.5em; margin: 0.3em 0; }
+.ProseMirror li { margin: 0.15em 0; }
+.ProseMirror p { margin: 0.3em 0; }

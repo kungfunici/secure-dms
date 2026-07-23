@@ -8,7 +8,9 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 
 import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
 @Entity
 @Table(name = "documents")
@@ -51,6 +53,13 @@ public class Document {
     @Column
     private Instant deletedAt;
 
+    @Column
+    private Instant retentionAt;
+
+    @Column(nullable = false)
+    @Builder.Default
+    private Boolean legalHold = false;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "owner_id", nullable = false)
     private User owner;
@@ -62,6 +71,13 @@ public class Document {
     @OneToMany(mappedBy = "document", cascade = CascadeType.ALL, orphanRemoval = true)
     @Builder.Default
     private List<DocumentPermission> permissions = new ArrayList<>();
+
+    @ManyToMany
+    @JoinTable(name = "document_tags",
+            joinColumns = @JoinColumn(name = "document_id"),
+            inverseJoinColumns = @JoinColumn(name = "tag_id"))
+    @Builder.Default
+    private Set<Tag> tags = new HashSet<>();
 
     @CreatedDate
     @Column(nullable = false, updatable = false)

@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.time.Instant;
+import java.util.List;
 
 @Data
 @Builder
@@ -23,4 +24,7 @@ public class DocumentResponse {
     private int currentVersion;
     private int versionCount;
     private boolean favorite;
+    private List<String> tags;
+    private Instant retentionAt;
+    private boolean legalHold;
 }

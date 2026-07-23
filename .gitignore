@@ -38,3 +38,6 @@ uploads/
 *.env
 .idea/
 *.iml
+/productplan
+/manual_tests
+/manual_tests_errorcodes

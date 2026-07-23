@@ -2,6 +2,7 @@ package dev.securecdms.controller;
 
 import dev.securecdms.dto.response.DocumentResponse;
 import dev.securecdms.dto.response.VersionResponse;
+import dev.securecdms.service.ConversionService;
 import dev.securecdms.service.DocumentService;
 import dev.securecdms.service.DocumentService.DownloadResult;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,7 @@ import java.util.Map;
 public class DocumentController {
 
     private final DocumentService documentService;
+    private final ConversionService conversionService;
 
     @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     public ResponseEntity<DocumentResponse> upload(
@@ -69,6 +71,14 @@ public class DocumentController {
             Pageable pageable) {
 
         return ResponseEntity.ok(documentService.listMyDocuments(userDetails.getUsername(), pageable));
+    }
+
+    @GetMapping("/{id}")
+    public ResponseEntity<DocumentResponse> getById(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        return ResponseEntity.ok(documentService.getById(id, userDetails.getUsername()));
     }
 
     @GetMapping("/trash")
@@ -134,20 +144,22 @@ public class DocumentController {
 
     @GetMapping("/shared-with-me")
     public ResponseEntity<Page<DocumentResponse>> listSharedWithMe(
+            @RequestParam(value = "q", required = false) String query,
             @AuthenticationPrincipal UserDetails userDetails,
             Pageable pageable) {
 
         return ResponseEntity.ok(
-                documentService.listSharedWithMe(userDetails.getUsername(), pageable));
+                documentService.listSharedWithMe(userDetails.getUsername(), query, pageable));
     }
 
     @GetMapping("/shared-by-me")
     public ResponseEntity<Page<DocumentResponse>> listSharedByMe(
+            @RequestParam(value = "q", required = false) String query,
             @AuthenticationPrincipal UserDetails userDetails,
             Pageable pageable) {
 
         return ResponseEntity.ok(
-                documentService.listSharedByMe(userDetails.getUsername(), pageable));
+                documentService.listSharedByMe(userDetails.getUsername(), query, pageable));
     }
 
     @DeleteMapping("/{id}")
@@ -193,6 +205,43 @@ public class DocumentController {
         return ResponseEntity.ok(response);
     }
 
+    // ---- Render (convert to HTML for editor) ----
+
+    @GetMapping("/{id}/render")
+    public ResponseEntity<?> getRender(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        try {
+            var result = documentService.getRender(id, userDetails.getUsername());
+            return ResponseEntity.ok(result);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to render document"));
+        }
+    }
+
+    @PutMapping("/{id}/save-rendered")
+    public ResponseEntity<?> saveRender(
+            @PathVariable Long id,
+            @RequestBody Map<String, String> body,
+            @AuthenticationPrincipal UserDetails userDetails) {
+
+        String html = body.get("html");
+        if (html == null) {
+            return ResponseEntity.badRequest().body(Map.of("error", "Missing html field"));
+        }
+        try {
+            DocumentResponse response = documentService.saveRender(id, html, userDetails.getUsername());
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException e) {
+            return ResponseEntity.badRequest().body(Map.of("error", e.getMessage()));
+        } catch (Exception e) {
+            return ResponseEntity.internalServerError().body(Map.of("error", "Failed to save rendered document"));
+        }
+    }
+
     // ---- Versions ----
 
     @GetMapping("/{id}/versions")
@@ -224,6 +273,14 @@ public class DocumentController {
         return ResponseEntity.noContent().build();
     }
 
+    @PostMapping("/trash/empty")
+    public ResponseEntity<Void> emptyTrash(
+            @AuthenticationPrincipal UserDetails userDetails) throws IOException {
+
+        documentService.emptyTrash(userDetails.getUsername());
+        return ResponseEntity.noContent().build();
+    }
+
     @PostMapping("/batch/move")
     public ResponseEntity<Void> batchMove(
             @RequestParam("folderId") Long folderId,
@@ -232,6 +289,33 @@ public class DocumentController {
 
         documentService.batchMove(ids, folderId, userDetails.getUsername());
         return ResponseEntity.ok().build();
+    }
+
+    // ---- Duplicate ----
+
+    @PostMapping("/{id}/duplicate")
+    public ResponseEntity<DocumentResponse> duplicate(
+            @PathVariable Long id,
+            @AuthenticationPrincipal UserDetails userDetails) throws IOException {
+        return ResponseEntity.ok(documentService.duplicate(id, userDetails.getUsername()));
+    }
+
+    // ---- Tags ----
+
+    @PostMapping("/{id}/tags/{tagId}")
+    public ResponseEntity<DocumentResponse> addTag(
+            @PathVariable Long id,
+            @PathVariable Long tagId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(documentService.addTag(id, tagId, userDetails.getUsername()));
+    }
+
+    @DeleteMapping("/{id}/tags/{tagId}")
+    public ResponseEntity<DocumentResponse> removeTag(
+            @PathVariable Long id,
+            @PathVariable Long tagId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        return ResponseEntity.ok(documentService.removeTag(id, tagId, userDetails.getUsername()));
     }
 
     // ---- Favorites ----

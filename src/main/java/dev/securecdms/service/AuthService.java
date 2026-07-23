@@ -7,12 +7,15 @@ import dev.securecdms.dto.response.AuthResponse;
 import dev.securecdms.exception.EmailAlreadyExistsException;
 import dev.securecdms.exception.ResourceNotFoundException;
 import dev.securecdms.exception.UsernameAlreadyExistsException;
+import dev.securecdms.model.PasswordResetToken;
 import dev.securecdms.model.Role;
 import dev.securecdms.model.User;
+import dev.securecdms.repository.PasswordResetTokenRepository;
 import dev.securecdms.repository.UserRepository;
 import dev.securecdms.security.jwt.JwtUtils;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.security.authentication.AuthenticationManager;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.Authentication;
@@ -21,9 +24,9 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.util.Map;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
@@ -35,10 +38,12 @@ public class AuthService {
     private final AuthenticationManager authenticationManager;
     private final JwtUtils jwtUtils;
     private final AuditService auditService;
+    private final PasswordResetTokenRepository passwordResetTokenRepository;
 
-    private static final String FRONTEND_URL = "http://localhost:5173";
+    @Value("${app.frontend-url:http://localhost:5173}")
+    private String frontendUrl;
 
-    private final Map<String, Long> passwordResetTokens = new ConcurrentHashMap<>();
+    private static final Duration RESET_TOKEN_TTL = Duration.ofHours(1);
 
     @Transactional
     public AuthResponse register(RegisterRequest request) {
@@ -111,24 +116,32 @@ public class AuthService {
                 .orElseThrow(() -> new ResourceNotFoundException("No user found with email: " + email));
 
         String token = UUID.randomUUID().toString();
-        passwordResetTokens.put(token, user.getId());
+        PasswordResetToken resetToken = PasswordResetToken.builder()
+                .token(token)
+                .user(user)
+                .expiryDate(Instant.now().plus(RESET_TOKEN_TTL))
+                .build();
+        passwordResetTokenRepository.save(resetToken);
 
-        String resetUrl = FRONTEND_URL + "/reset-password?token=" + token;
+        String resetUrl = frontendUrl + "/reset-password?token=" + token;
         log.info("Password reset link for {}: {}", email, resetUrl);
     }
 
     @Transactional
     public void resetPassword(String token, String newPassword) {
-        Long userId = passwordResetTokens.remove(token);
-        if (userId == null) {
+        PasswordResetToken resetToken = passwordResetTokenRepository.findByToken(token)
+                .orElseThrow(() -> new IllegalArgumentException("Invalid or expired reset token"));
+
+        if (resetToken.isUsed() || resetToken.isExpired()) {
             throw new IllegalArgumentException("Invalid or expired reset token");
         }
 
-        User user = userRepository.findById(userId)
-                .orElseThrow(() -> new ResourceNotFoundException("User not found"));
-
+        User user = resetToken.getUser();
         user.setPasswordHash(passwordEncoder.encode(newPassword));
         userRepository.save(user);
+
+        resetToken.setUsed(true);
+        passwordResetTokenRepository.save(resetToken);
 
         log.info("Password reset for user: {}", user.getUsername());
     }
@@ -158,13 +171,15 @@ public class AuthService {
         String accessToken = jwtUtils.generateToken(userDetails);
         String refreshToken = jwtUtils.generateRefreshToken(userDetails);
 
+        String role = user.getRole().name();
+        if (role.startsWith("ROLE_")) role = role.substring(5);
         return AuthResponse.builder()
                 .id(user.getId())
                 .token(accessToken)
                 .refreshToken(refreshToken)
                 .tokenType("Bearer")
                 .username(user.getUsername())
-                .role(user.getRole().name())
+                .role(role)
                 .build();
     }
 }

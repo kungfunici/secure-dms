@@ -72,6 +72,12 @@ public class StorageService {
         log.debug("File deleted: {}", storedFilename);
     }
 
+    public void storeBytes(byte[] data, String storedFilename) throws IOException {
+        Path target = uploadDir.resolve(storedFilename);
+        Files.write(target, data);
+        log.debug("Bytes stored: {}", storedFilename);
+    }
+
     private String getExtension(String filename) {
         if (filename == null || !filename.contains(".")) return "";
         return filename.substring(filename.lastIndexOf('.') + 1).toLowerCase();

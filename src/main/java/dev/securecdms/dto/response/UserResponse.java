@@ -12,6 +12,8 @@ public class UserResponse {
     private String username;
     private String email;
     private String profilePicture;
+    private String role;
+    private boolean enabled;
     private int versionRetentionDays;
     private Instant createdAt;
 }

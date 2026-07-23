@@ -38,8 +38,18 @@ public class UserController {
         }
         Path path = storageService.load(profilePicture);
         Resource resource = new PathResource(path);
+        String ext = profilePicture.contains(".") ? profilePicture.substring(profilePicture.lastIndexOf('.') + 1).toLowerCase() : "";
+        MediaType mediaType = switch (ext) {
+            case "png" -> MediaType.IMAGE_PNG;
+            case "gif" -> MediaType.IMAGE_GIF;
+            case "webp" -> MediaType.valueOf("image/webp");
+            case "svg" -> MediaType.valueOf("image/svg+xml");
+            case "bmp" -> MediaType.valueOf("image/bmp");
+            default -> MediaType.IMAGE_JPEG;
+        };
         return ResponseEntity.ok()
-                .contentType(MediaType.IMAGE_JPEG)
+                .cacheControl(org.springframework.http.CacheControl.noCache())
+                .contentType(mediaType)
                 .body(resource);
     }
 

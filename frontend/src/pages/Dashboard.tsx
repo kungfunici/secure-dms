@@ -1,15 +1,17 @@
-import { useState, useEffect, type DragEvent } from 'react'
+import { useState, useEffect, useRef, useCallback, type DragEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/contexts/AuthContext'
 import { useDarkMode } from '@/hooks/useDarkMode'
-import { folders, documents, users, notifications as notifApi, type DocumentResponse, type FolderResponse, type PermissionResponse, type UserResponse, type NotificationResponse, type VersionResponse } from '@/lib/api'
+import { folders, documents, users, tags as tagsApi, notifications as notifApi, type DocumentResponse, type FolderResponse, type PermissionResponse, type UserResponse, type NotificationResponse, type VersionResponse, type TagResponse } from '@/lib/api'
+import Spinner from '@/components/ui/spinner'
+import RichTextEditor from '@/components/RichTextEditor'
 import {
   FileText, LogOut, Search, Upload, Download, Trash2, FolderPlus, Folder, Share2, X, UserPlus, MoveRight,
   Moon, Sun, Bell, RotateCcw, Clock, FileInput, Archive, Eye, History, CheckSquare, Square, DownloadCloud, Pencil,
-  Star, List, Grid3X3
+  Star, List, Grid3X3, Copy, LayoutDashboard, Lock, CheckCircle, Loader, Plus
 } from 'lucide-react'
 
 type DocTab = 'mine' | 'shared-with-me' | 'shared-by-me' | 'trash' | 'favorites'
@@ -56,6 +58,17 @@ export default function Dashboard() {
   // Move
   const [moveDocId, setMoveDocId] = useState<number | null>(null)
 
+  // Tags
+  const [allTags, setAllTags] = useState<TagResponse[]>([])
+  const [selectedTag, setSelectedTag] = useState('')
+  const [showTagManager, setShowTagManager] = useState(false)
+  const [tagAddDocId, setTagAddDocId] = useState<number | null>(null)
+  const [newTagName, setNewTagName] = useState('')
+  const [newTagColor, setNewTagColor] = useState('#6366f1')
+
+  // Loading states
+  const [docsLoading, setDocsLoading] = useState(false)
+
   // Preview
   const [previewDoc, setPreviewDoc] = useState<DocumentResponse | null>(null)
   const [previewBlobUrl, setPreviewBlobUrl] = useState<string | null>(null)
@@ -69,6 +82,13 @@ export default function Dashboard() {
   const [editDoc, setEditDoc] = useState<DocumentResponse | null>(null)
   const [editContent, setEditContent] = useState('')
   const [editLoading, setEditLoading] = useState(false)
+  const [editSaveStatus, setEditSaveStatus] = useState<'saved' | 'unsaved' | 'saving'>('saved')
+  const [previewMode, setPreviewMode] = useState(false)
+  const [serverChanged, setServerChanged] = useState(false)
+  const editContentRef = useRef(editContent)
+  editContentRef.current = editContent
+  const savedContentRef = useRef('')
+  const loadedVersionRef = useRef(0)
 
   // Batch selection
   const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set())
@@ -81,16 +101,12 @@ export default function Dashboard() {
 
   // ---- Loaders ----
   async function loadDocs() {
+    setDocsLoading(true)
     try {
       if (activeTab === 'favorites') {
-        const favs = await documents.listFavorites()
+        let favs = await documents.listFavorites()
+        if (searchQuery) favs = favs.filter(d => d.originalFilename.toLowerCase().includes(searchQuery.toLowerCase()))
         setDocs(favs)
-        setSelectedIds(new Set())
-        return
-      }
-      if (searchQuery) {
-        const res = await documents.search(searchQuery)
-        setDocs(res.content)
         setSelectedIds(new Set())
         return
       }
@@ -100,22 +116,37 @@ export default function Dashboard() {
         setSelectedIds(new Set())
         return
       }
+
+      let all: DocumentResponse[] = []
+
       if (activeTab === 'mine') {
-        const sort = sortDir === 'desc' ? `${sortBy},desc` : sortBy
-        const res = await documents.list(0, 50, sort)
-        let all = res.content
+        if (searchQuery) {
+          const res = await documents.search(searchQuery)
+          all = res.content.filter(d => d.ownerUsername === user?.username)
+        } else {
+          const sort = sortDir === 'desc' ? `${sortBy},desc` : sortBy
+          const res = await documents.list(0, 50, sort)
+          all = res.content
+        }
         if (selectedFolder !== undefined) all = all.filter(d => d.folderId === selectedFolder)
         if (selectedDocType) all = all.filter(d => d.documentType === selectedDocType)
-        setDocs(all)
+        if (selectedTag) all = all.filter(d => d.tags?.includes(selectedTag))
       } else if (activeTab === 'shared-with-me') {
-        const res = await documents.sharedWithMe()
-        setDocs(res.content)
+        const res = searchQuery ? await documents.sharedWithMe(0, 50, searchQuery) : await documents.sharedWithMe()
+        all = res.content
       } else if (activeTab === 'shared-by-me') {
-        const res = await documents.sharedByMe()
-        setDocs(res.content)
+        const res = searchQuery ? await documents.sharedByMe(0, 50, searchQuery) : await documents.sharedByMe()
+        all = res.content
       }
+
+      setDocs(all)
       setSelectedIds(new Set())
     } catch { setError('Failed to load documents') }
+    finally { setDocsLoading(false) }
+  }
+
+  async function loadTags() {
+    try { setAllTags(await tagsApi.list()) } catch { /* ignore */ }
   }
 
   async function loadRecent() {
@@ -137,7 +168,8 @@ export default function Dashboard() {
     } catch { /* ignore */ }
   }
 
-  useEffect(() => { loadDocs(); loadFolders(); loadRecent(); loadNotifications() }, [activeTab, selectedFolder, selectedDocType, sortBy, sortDir])
+  useEffect(() => { const t = setTimeout(() => { loadDocs() }, 200); return () => clearTimeout(t) }, [searchQuery])
+  useEffect(() => { loadDocs(); loadFolders(); loadRecent(); loadNotifications(); loadTags() }, [activeTab, selectedFolder, selectedDocType, sortBy, sortDir, selectedTag])
 
   // ---- Drag & Drop ----
   function onDragOver(e: DragEvent) { e.preventDefault(); setDragOver(true) }
@@ -165,7 +197,7 @@ export default function Dashboard() {
   }
 
   async function handleDelete(id: number) {
-    try { await documents.delete(id); loadDocs() } catch (err) { setError(err instanceof Error ? err.message : 'Delete failed') }
+    try { await documents.delete(id); loadDocs(); loadFolders() } catch (err) { setError(err instanceof Error ? err.message : 'Delete failed') }
   }
 
   async function handleRestore(id: number) {
@@ -187,9 +219,49 @@ export default function Dashboard() {
     } catch (err) { setError(err instanceof Error ? err.message : 'Failed to delete folder') }
   }
 
+  async function handleDuplicate(id: number) {
+    try { await documents.duplicate(id); loadDocs() }
+    catch (err) { setError(err instanceof Error ? err.message : 'Duplicate failed') }
+  }
+
+  async function handleCreateTag() {
+    if (!newTagName.trim()) return
+    try {
+      await tagsApi.create(newTagName.trim(), newTagColor)
+      setNewTagName(''); loadTags()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to create tag') }
+  }
+
+  async function handleDeleteTag(id: number) {
+    try {
+      await tagsApi.delete(id)
+      setSelectedTag(prev => {
+        const deletedTag = allTags.find(t => t.id === id)
+        return deletedTag && prev === deletedTag.name ? '' : prev
+      })
+      loadDocs()
+      loadTags()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to delete tag') }
+  }
+
+  async function handleAddTag(docId: number, tagId: number) {
+    try {
+      await documents.addTag(docId, tagId)
+      setTagAddDocId(null)
+      loadDocs()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to add tag') }
+  }
+
+  async function handleRemoveTag(docId: number, tagId: number) {
+    try {
+      await documents.removeTag(docId, tagId)
+      loadDocs()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to remove tag') }
+  }
+
   async function handleMoveToFolder(docId: number, folderId: number | null) {
-    try { await documents.moveToFolder(docId, folderId); setMoveDocId(null); loadDocs() }
-    catch (err) { setError(err instanceof Error ? err.message : 'Failed to move document') }
+    try { await documents.moveToFolder(docId, folderId); setMoveDocId(null); loadDocs(); loadFolders() }
+    catch (err) { setError(err instanceof Error ? err.message : 'Move failed') }
   }
 
   async function openShareDialog(docId: number) {
@@ -258,9 +330,14 @@ export default function Dashboard() {
   async function openEditor(doc: DocumentResponse) {
     setEditDoc(doc)
     setEditLoading(true)
+    setPreviewMode(false)
+    setEditSaveStatus('saved')
+    setServerChanged(false)
+    loadedVersionRef.current = doc.currentVersion ?? 0
     try {
-      const content = await documents.getContent(doc.id)
+      const content = await documents.getRender(doc.id)
       setEditContent(content)
+      savedContentRef.current = content
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load content')
       setEditDoc(null)
@@ -270,13 +347,77 @@ export default function Dashboard() {
 
   async function handleSaveContent() {
     if (!editDoc) return
+    const html = editContent.trim()
+    if (!html || html === '<p></p>' || html === '<p><br></p>' || html === '<div></div>') return
+    setEditSaveStatus('saving')
     try {
-      const updated = await documents.updateContent(editDoc.id, editContent)
+      const updated = await documents.saveRendered(editDoc.id, html)
+      savedContentRef.current = html
+      loadedVersionRef.current = updated.currentVersion ?? loadedVersionRef.current
       setEditDoc(null)
       setEditContent('')
-      // Update doc in list
+      setEditSaveStatus('saved')
+      setServerChanged(false)
       setDocs(prev => prev.map(d => d.id === updated.id ? { ...d, currentVersion: updated.currentVersion, versionCount: updated.versionCount } : d))
-    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to save content') }
+    } catch (err) { setError(err instanceof Error ? err.message : 'Failed to save content'); setEditSaveStatus('unsaved') }
+  }
+
+  const handleAutoSave = useCallback(async () => {
+    if (!editDoc) return
+    const html = editContentRef.current.trim()
+    if (!html || html === '<p></p>' || html === '<p><br></p>' || html === '<div></div>' || html === savedContentRef.current.trim()) return
+    setEditSaveStatus('saving')
+    try {
+      const updated = await documents.saveRendered(editDoc.id, html)
+      savedContentRef.current = html
+      loadedVersionRef.current = updated.currentVersion ?? loadedVersionRef.current
+      setEditSaveStatus('saved')
+      setServerChanged(false)
+    } catch {
+      setEditSaveStatus('unsaved')
+    }
+  }, [editDoc])
+
+  // Auto-save debounce
+  useEffect(() => {
+    if (!editDoc || editLoading) return
+    if (editContent === savedContentRef.current) return
+    setEditSaveStatus('unsaved')
+    const timer = setTimeout(() => {
+      handleAutoSave()
+    }, 30000)
+    return () => clearTimeout(timer)
+  }, [editContent, editDoc, editLoading, handleAutoSave])
+
+  // Check server version every 60s for external changes
+  useEffect(() => {
+    if (!editDoc) return
+    const interval = setInterval(async () => {
+      try {
+        const server = await documents.getById(editDoc.id)
+        const sv = server.currentVersion ?? 0
+        if (sv > loadedVersionRef.current) {
+          setServerChanged(true)
+        }
+      } catch {}
+    }, 60000)
+    return () => clearInterval(interval)
+  }, [editDoc])
+
+  async function handleReloadFromServer() {
+    if (!editDoc) return
+    setEditLoading(true)
+    setServerChanged(false)
+    try {
+      const content = await documents.getRender(editDoc.id)
+      setEditContent(content)
+      savedContentRef.current = content
+      const server = await documents.getById(editDoc.id)
+      loadedVersionRef.current = server.currentVersion ?? 0
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reload')
+    }
+    setEditLoading(false)
   }
 
   async function handleRestoreVersion(versionId: number) {
@@ -305,8 +446,16 @@ export default function Dashboard() {
     if (selectedIds.size === 0) return
     try {
       await documents.batchDelete([...selectedIds])
-      setSelectedIds(new Set()); loadDocs()
+      setSelectedIds(new Set()); loadDocs(); loadFolders()
     } catch (err) { setError(err instanceof Error ? err.message : 'Batch delete failed') }
+  }
+
+  async function handleEmptyTrash() {
+    if (!confirm('Permanently delete all trashed documents?')) return
+    try {
+      await documents.emptyTrash()
+      setSelectedIds(new Set()); loadDocs(); loadFolders()
+    } catch (err) { setError(err instanceof Error ? err.message : 'Empty trash failed') }
   }
 
   async function handleBatchDownload() {
@@ -397,6 +546,13 @@ export default function Dashboard() {
                 </div>
               )}
             </div>
+
+            {/* Admin link */}
+            {user?.role === 'ADMIN' && (
+              <Button variant="ghost" size="sm" onClick={() => navigate('/admin')}>
+                <LayoutDashboard className="h-4 w-4 mr-1" /> Admin
+              </Button>
+            )}
 
             {/* Dark mode toggle */}
             <Button variant="ghost" size="icon" onClick={toggleDark} title={dark ? 'Light mode' : 'Dark mode'}>
@@ -593,31 +749,90 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Batch toolbar */}
-            {selectedIds.size > 0 && !isTrash && (
-              <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg">
-                <span className="text-sm font-medium">{selectedIds.size} selected</span>
-                <div className="flex-1" />
-                <Button size="sm" variant="outline" onClick={handleBatchDownload}>
-                  <DownloadCloud className="h-4 w-4 mr-1" /> Download ZIP
-                </Button>
-                <div className="flex items-center gap-1">
-                  <select className="h-8 rounded-md border border-input bg-background px-2 text-xs"
-                    value={batchMoveFolderId ?? ''} onChange={e => setBatchMoveFolderId(e.target.value ? Number(e.target.value) : null)}>
-                    <option value="">Move to...</option>
-                    {folderList.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
-                  </select>
-                  <Button size="sm" variant="outline" onClick={handleBatchMove} disabled={batchMoveFolderId === null}>
-                    <MoveRight className="h-4 w-4" />
-                  </Button>
-                </div>
-                <Button size="sm" variant="destructive" onClick={handleBatchDelete}>
-                  <Trash2 className="h-4 w-4 mr-1" /> Delete
+            {/* Tag filter */}
+            {activeTab === 'mine' && (
+              <div className="flex flex-wrap items-center gap-1">
+                {allTags.length > 0 && (
+                  <>
+                    <span className="text-xs text-muted-foreground mr-1">Tags:</span>
+                    <button className={`px-2 py-1 text-xs rounded-full transition-colors ${!selectedTag ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                      onClick={() => { setSelectedTag(''); loadDocs() }}>All</button>
+                    {allTags.map(t => (
+                      <button key={t.id} className={`px-2 py-1 text-xs rounded-full transition-colors ${selectedTag === t.name ? 'bg-primary text-primary-foreground' : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                        onClick={() => { setSelectedTag(t.name); loadDocs() }}
+                        style={selectedTag !== t.name ? { borderLeftColor: t.color, borderLeftWidth: 3 } : {}}>
+                        {t.name}
+                      </button>
+                    ))}
+                  </>
+                )}
+                {allTags.length === 0 && (
+                  <span className="text-xs text-muted-foreground mr-1">No tags yet.</span>
+                )}
+                <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setShowTagManager(!showTagManager)} title="Manage tags">
+                  <FolderPlus className="h-3 w-3" />
                 </Button>
               </div>
             )}
 
-            {docs.length === 0 ? (
+            {/* Tag manager */}
+            {showTagManager && (
+              <div className="flex flex-wrap items-center gap-2 p-3 bg-muted rounded-lg">
+                <Input placeholder="Tag name" className="h-8 w-40 text-xs" value={newTagName} onChange={e => setNewTagName(e.target.value)} />
+                <input type="color" className="h-8 w-8 rounded cursor-pointer" value={newTagColor} onChange={e => setNewTagColor(e.target.value)} />
+                <Button size="sm" variant="outline" className="h-8" onClick={handleCreateTag}><FolderPlus className="h-3 w-3 mr-1" /> Create</Button>
+                <div className="flex-1" />
+                {allTags.map(t => (
+                  <div key={t.id} className="flex items-center gap-1 px-2 py-1 rounded bg-background border text-xs">
+                    <span style={{ color: t.color }}>●</span> {t.name}
+                    <button onClick={() => handleDeleteTag(t.id)} className="text-muted-foreground hover:text-destructive"><X className="h-3 w-3" /></button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Batch toolbar */}
+            {selectedIds.size > 0 && (
+              <div className="flex items-center gap-2 px-3 py-2 bg-muted rounded-lg">
+                <span className="text-sm font-medium">{selectedIds.size} selected</span>
+                <div className="flex-1" />
+                {!isTrash && (
+                  <>
+                    <Button size="sm" variant="outline" onClick={handleBatchDownload}>
+                      <DownloadCloud className="h-4 w-4 mr-1" /> Download ZIP
+                    </Button>
+                    <div className="flex items-center gap-1">
+                      <select className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+                        value={batchMoveFolderId ?? ''} onChange={e => setBatchMoveFolderId(e.target.value ? Number(e.target.value) : null)}>
+                        <option value="">Move to...</option>
+                        {folderList.map(f => <option key={f.id} value={f.id}>{f.name}</option>)}
+                      </select>
+                      <Button size="sm" variant="outline" onClick={handleBatchMove} disabled={batchMoveFolderId === null}>
+                        <MoveRight className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </>
+                )}
+                <Button size="sm" variant="destructive" onClick={handleBatchDelete}>
+                  <Trash2 className="h-4 w-4 mr-1" /> {isTrash ? 'Delete permanently' : 'Delete'}
+                </Button>
+              </div>
+            )}
+
+            {/* Empty trash */}
+            {isTrash && docs.length > 0 && selectedIds.size === 0 && (
+              <div className="flex justify-end mb-2">
+                <Button size="sm" variant="destructive" onClick={handleEmptyTrash}>
+                  <Trash2 className="h-4 w-4 mr-1" /> Empty Trash
+                </Button>
+              </div>
+            )}
+
+            {docsLoading ? (
+              <div className="flex items-center justify-center py-12 text-muted-foreground">
+                <Spinner className="h-6 w-6 mr-2" /> <span className="text-sm">Loading...</span>
+              </div>
+            ) : docs.length === 0 ? (
               <p className="text-sm text-muted-foreground text-center py-8">
                 {isTrash ? 'Trash is empty' : activeTab === 'favorites' ? 'No favorites yet' : 'No documents found'}
               </p>
@@ -639,6 +854,21 @@ export default function Dashboard() {
                               {doc.documentType}
                             </span>
                           )}
+                          {doc.legalHold && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                              <Lock className="h-3 w-3 mr-0.5" /> Legal Hold
+                            </span>
+                          )}
+                          {doc.retentionAt && (
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                              new Date(doc.retentionAt) < new Date()
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                            }`}>
+                              <Clock className="h-3 w-3 mr-0.5" />
+                              {new Date(doc.retentionAt) < new Date() ? 'Expired' : Math.ceil((new Date(doc.retentionAt).getTime() - Date.now()) / 86400000) + 'd'}
+                            </span>
+                          )}
                           {(doc.versionCount ?? 0) > 1 && (
                             <span className="text-[10px] text-muted-foreground">v{doc.currentVersion}</span>
                           )}
@@ -650,6 +880,51 @@ export default function Dashboard() {
                           {doc.deletedAt && <span> &middot; deleted</span>}
                           {(doc.versionCount ?? 0) > 1 && <span> &middot; {doc.versionCount} versions</span>}
                         </p>
+                        {(doc.tags?.length > 0 || (isOwner(doc) && !isTrash)) && (
+                          <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {doc.tags?.map(t => {
+                              const tagDef = allTags.find(tg => tg.name === t)
+                              return (
+                                <span key={t} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-muted group/tag"
+                                  style={tagDef ? { color: tagDef.color, borderLeft: `2px solid ${tagDef.color}` } : {}}>
+                                  {t}
+                                  {isOwner(doc) && !isTrash && tagDef && (
+                                    <button onClick={() => handleRemoveTag(doc.id, tagDef.id)}
+                                      className="ml-0.5 opacity-0 group-hover/tag:opacity-100 hover:text-destructive transition-opacity"
+                                      title="Remove tag">
+                                      <X className="h-2.5 w-2.5" />
+                                    </button>
+                                  )}
+                                </span>
+                              )
+                            })}
+                            {isOwner(doc) && !isTrash && (
+                              <div className="relative">
+                                <button onClick={() => setTagAddDocId(tagAddDocId === doc.id ? null : doc.id)}
+                                  className="inline-flex items-center px-1 py-0.5 rounded text-[10px] bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
+                                  title="Add tag">
+                                  <Plus className="h-3 w-3" />
+                                </button>
+                                {tagAddDocId === doc.id && (
+                                  <div className="absolute left-0 top-full mt-1 bg-popover border rounded-lg shadow-lg p-1 z-50 min-w-[120px]"
+                                    onClick={e => e.stopPropagation()}>
+                                    {allTags.filter(t => !doc.tags?.includes(t.name)).length === 0 ? (
+                                      <p className="text-xs text-muted-foreground px-2 py-1">No more tags</p>
+                                    ) : (
+                                      allTags.filter(t => !doc.tags?.includes(t.name)).map(t => (
+                                        <button key={t.id}
+                                          className="w-full text-left px-2 py-1 text-xs rounded hover:bg-muted flex items-center gap-1.5 transition-colors"
+                                          onClick={() => handleAddTag(doc.id, t.id)}>
+                                          <span style={{ color: t.color }}>●</span> {t.name}
+                                        </button>
+                                      ))
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     </div>
                     <div className="flex items-center gap-2 shrink-0">
@@ -671,19 +946,19 @@ export default function Dashboard() {
                         <Button variant="ghost" size="icon" onClick={async () => {
                           setPreviewDoc(doc); setPreviewBlobUrl(null); setPreviewTextContent(null)
                           try {
-                            if (doc.contentType?.startsWith('text/')) {
-                              const text = await documents.getContent(doc.id)
-                              setPreviewTextContent(text)
-                            } else {
+                            if (doc.contentType?.startsWith('image/') || doc.contentType === 'application/pdf') {
                               const url = await documents.getPreviewBlobUrl(doc.id, doc.contentType)
                               setPreviewBlobUrl(url)
+                            } else {
+                              const html = await documents.getRender(doc.id)
+                              setPreviewTextContent(html)
                             }
                           } catch { setError('Failed to load preview') }
                         }} title="Preview">
                           <Eye className="h-4 w-4" />
                         </Button>
                       )}
-                      {!isTrash && (isOwner(doc) || doc.permission === 'WRITE') && doc.contentType?.startsWith('text/') && (
+                      {!isTrash && (isOwner(doc) || doc.permission === 'WRITE') && (doc.contentType?.startsWith('text/') || doc.contentType === 'application/msword' || doc.contentType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' || doc.contentType === 'application/vnd.oasis.opendocument.text' || doc.contentType === 'application/rtf' || doc.contentType === 'text/csv' || doc.contentType === 'text/markdown' || doc.contentType === 'text/html' || doc.contentType === 'application/json' || doc.contentType === 'application/xml') && (
                         <Button variant="ghost" size="icon" onClick={() => openEditor(doc)} title="Edit">
                           <Pencil className="h-4 w-4" />
                         </Button>
@@ -722,6 +997,9 @@ export default function Dashboard() {
                               </div>
                             )}
                           </div>
+                          {!isTrash && <Button variant="ghost" size="icon" onClick={() => handleDuplicate(doc.id)} title="Duplicate">
+                            <Copy className="h-4 w-4" />
+                          </Button>}
                           {!isTrash && <Button variant="ghost" size="icon" onClick={() => openShareDialog(doc.id)} title="Share">
                             <Share2 className="h-4 w-4" />
                           </Button>}
@@ -756,11 +1034,71 @@ export default function Dashboard() {
                               {doc.documentType}
                             </span>
                           )}
+                          {doc.legalHold && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400">
+                              <Lock className="h-3 w-3 mr-0.5" /> Legal Hold
+                            </span>
+                          )}
+                          {doc.retentionAt && (
+                            <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium ${
+                              new Date(doc.retentionAt) < new Date()
+                                ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400'
+                                : 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400'
+                            }`}>
+                              <Clock className="h-3 w-3 mr-0.5" />
+                              {new Date(doc.retentionAt) < new Date() ? 'Expired' : Math.ceil((new Date(doc.retentionAt).getTime() - Date.now()) / 86400000) + 'd'}
+                            </span>
+                          )}
                         </p>
                         <p className="text-xs text-muted-foreground">
                           {(doc.fileSize / 1024).toFixed(1)} KB
                           {!isOwner(doc) && <span> &middot; {doc.ownerUsername}</span>}
                         </p>
+                        {(doc.tags?.length > 0 || (isOwner(doc) && !isTrash)) && (
+                          <div className="flex flex-wrap items-center gap-1 mt-1">
+                            {doc.tags?.map(t => {
+                              const tagDef = allTags.find(tg => tg.name === t)
+                              return (
+                                <span key={t} className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10px] bg-muted group/tag"
+                                  style={tagDef ? { color: tagDef.color, borderLeft: `2px solid ${tagDef.color}` } : {}}>
+                                  {t}
+                                  {isOwner(doc) && !isTrash && tagDef && (
+                                    <button onClick={() => handleRemoveTag(doc.id, tagDef.id)}
+                                      className="ml-0.5 opacity-0 group-hover/tag:opacity-100 hover:text-destructive transition-opacity"
+                                      title="Remove tag">
+                                      <X className="h-2.5 w-2.5" />
+                                    </button>
+                                  )}
+                                </span>
+                              )
+                            })}
+                            {isOwner(doc) && !isTrash && (
+                              <div className="relative">
+                                <button onClick={() => setTagAddDocId(tagAddDocId === doc.id ? null : doc.id)}
+                                  className="inline-flex items-center px-1 py-0.5 rounded text-[10px] bg-muted hover:bg-muted/80 text-muted-foreground transition-colors"
+                                  title="Add tag">
+                                  <Plus className="h-3 w-3" />
+                                </button>
+                                {tagAddDocId === doc.id && (
+                                  <div className="absolute left-0 top-full mt-1 bg-popover border rounded-lg shadow-lg p-1 z-50 min-w-[120px]"
+                                    onClick={e => e.stopPropagation()}>
+                                    {allTags.filter(t => !doc.tags?.includes(t.name)).length === 0 ? (
+                                      <p className="text-xs text-muted-foreground px-2 py-1">No more tags</p>
+                                    ) : (
+                                      allTags.filter(t => !doc.tags?.includes(t.name)).map(t => (
+                                        <button key={t.id}
+                                          className="w-full text-left px-2 py-1 text-xs rounded hover:bg-muted flex items-center gap-1.5 transition-colors"
+                                          onClick={() => handleAddTag(doc.id, t.id)}>
+                                          <span style={{ color: t.color }}>●</span> {t.name}
+                                        </button>
+                                      ))
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                       {!isTrash && (
                         <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => handleToggleFavorite(doc)}
@@ -774,10 +1112,10 @@ export default function Dashboard() {
                         <Button variant="ghost" size="icon" className="h-7 w-7" title="Preview" onClick={async () => {
                           setPreviewDoc(doc); setPreviewBlobUrl(null); setPreviewTextContent(null)
                           try {
-                            if (doc.contentType?.startsWith('text/')) {
-                              setPreviewTextContent(await documents.getContent(doc.id))
-                            } else {
+                            if (doc.contentType?.startsWith('image/') || doc.contentType === 'application/pdf') {
                               setPreviewBlobUrl(await documents.getPreviewBlobUrl(doc.id, doc.contentType))
+                            } else {
+                              setPreviewTextContent(await documents.getRender(doc.id))
                             }
                           } catch { setError('Failed to load preview') }
                         }}>
@@ -887,29 +1225,14 @@ export default function Dashboard() {
               </div>
             </div>
             <div className="flex-1 overflow-auto p-6 bg-muted/20 flex items-start justify-center">
-              {previewDoc.contentType.startsWith('text/') && previewTextContent !== null ? (
-                <pre className="w-full h-[70vh] overflow-auto p-4 rounded-lg border bg-card text-sm font-mono whitespace-pre-wrap">{previewTextContent}</pre>
-              ) : !previewBlobUrl && !previewDoc.contentType.startsWith('image/') && previewDoc.contentType !== 'application/pdf' ? (
-                <div className="text-center py-12">
-                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground">
-                    {previewDoc.contentType.includes('officedocument') || previewDoc.contentType.includes('opendocument') || previewDoc.contentType === 'application/msword' || previewDoc.contentType === 'application/vnd.ms-excel' || previewDoc.contentType === 'application/vnd.ms-powerpoint' || previewDoc.contentType === 'application/rtf'
-                      ? 'Office documents cannot be previewed in the browser'
-                      : 'Preview not available for this file type'}
-                  </p>
-                  <Button variant="outline" size="sm" className="mt-3" onClick={() => handleDownload(previewDoc.id)}>
-                    <Download className="h-4 w-4 mr-2" /> Download to view
-                  </Button>
+              {previewTextContent !== null ? (
+                <div className="w-full h-[70vh] overflow-auto p-4 rounded-lg border bg-card">
+                  <div className="prose prose-sm dark:prose-invert prose-lo max-w-none" dangerouslySetInnerHTML={{ __html: previewTextContent }} />
                 </div>
-              ) : !previewBlobUrl ? (
-                <div className="text-center py-12">
-                  <FileText className="h-12 w-12 text-muted-foreground mx-auto mb-3" />
-                  <p className="text-sm text-muted-foreground">Loading preview...</p>
-                </div>
-              ) : previewDoc.contentType.startsWith('image/') ? (
+              ) : previewBlobUrl && previewDoc.contentType.startsWith('image/') ? (
                 <img src={previewBlobUrl} alt={previewDoc.originalFilename}
                   className="max-w-full max-h-[70vh] rounded-lg shadow" />
-              ) : previewDoc.contentType === 'application/pdf' ? (
+              ) : previewBlobUrl && previewDoc.contentType === 'application/pdf' ? (
                 <embed src={previewBlobUrl} type="application/pdf" className="w-full h-[70vh] rounded-lg" />
               ) : (
                 <div className="text-center py-12">
@@ -928,7 +1251,7 @@ export default function Dashboard() {
       {/* Editor Dialog */}
       {editDoc && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setEditDoc(null)}>
-          <div className="bg-background rounded-xl w-full max-w-3xl max-h-[90vh] flex flex-col shadow-lg" onClick={e => e.stopPropagation()}>
+          <div className="bg-background rounded-xl w-full max-w-5xl max-h-[90vh] flex flex-col shadow-lg" onClick={e => e.stopPropagation()}>
             <div className="flex items-center justify-between px-6 py-4 border-b shrink-0">
               <div>
                 <h3 className="font-semibold flex items-center gap-2">
@@ -938,27 +1261,67 @@ export default function Dashboard() {
                   {editDoc.contentType} &middot; {(editDoc.fileSize / 1024).toFixed(1)} KB
                 </p>
               </div>
-              <Button variant="ghost" size="icon" onClick={() => setEditDoc(null)}><X className="h-4 w-4" /></Button>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" onClick={() => setPreviewMode(p => !p)}>
+                  {previewMode ? <FileText className="h-4 w-4 mr-1" /> : <Eye className="h-4 w-4 mr-1" />}
+                  {previewMode ? 'Edit' : 'Preview'}
+                </Button>
+                <Button variant="ghost" size="icon" onClick={() => setEditDoc(null)}><X className="h-4 w-4" /></Button>
+              </div>
             </div>
-            <div className="flex-1 p-4">
+
+            {serverChanged && (
+              <div className="flex items-center justify-between px-6 py-3 bg-amber-500/10 border-b border-amber-500/30">
+                <p className="text-xs text-amber-700 dark:text-amber-400">
+                  A new version was saved by someone else. Your editor still shows the old version.
+                </p>
+                <Button variant="outline" size="sm" onClick={handleReloadFromServer} disabled={editLoading}>
+                  <DownloadCloud className="h-3 w-3 mr-1" /> Reload
+                </Button>
+              </div>
+            )}
+
+            <div className="flex-1 overflow-auto">
               {editLoading ? (
                 <div className="flex items-center justify-center h-64">
                   <p className="text-sm text-muted-foreground">Loading content...</p>
                 </div>
+              ) : previewMode ? (
+                <div className="flex h-full">
+                  <div className="flex-1 p-4 overflow-auto border-r">
+                    <p className="text-xs text-muted-foreground mb-2 font-medium">My edits</p>
+                    <div className="prose prose-sm prose-lo max-w-none bg-white text-black" dangerouslySetInnerHTML={{ __html: editContent }} />
+                  </div>
+                  <div className="flex-1 p-4 overflow-auto">
+                    <p className="text-xs text-muted-foreground mb-2 font-medium">Last saved version</p>
+                    {savedContentRef.current ? (
+                      <div className="prose prose-sm prose-lo max-w-none bg-white text-black" dangerouslySetInnerHTML={{ __html: savedContentRef.current }} />
+                    ) : (
+                      <p className="text-xs text-muted-foreground italic">No saved version yet</p>
+                    )}
+                  </div>
+                </div>
               ) : (
-                <textarea
-                  className="w-full h-64 md:h-96 p-4 rounded-lg border border-input bg-background text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-ring"
-                  value={editContent}
-                  onChange={e => setEditContent(e.target.value)}
-                />
+                <div className="p-4">
+                  <RichTextEditor
+                    content={editContent}
+                    onChange={setEditContent}
+                    placeholder="Start writing..."
+                  />
+                </div>
               )}
             </div>
             <div className="flex items-center justify-end gap-2 px-6 py-4 border-t shrink-0">
-              <p className="text-xs text-muted-foreground flex-1">
+              <p className="text-xs text-muted-foreground flex items-center gap-1 flex-1">
                 Saving creates a new version (v{(editDoc.currentVersion ?? 0) + 1})
+                <span className="ml-2 flex items-center gap-1">
+                  {editSaveStatus === 'saving' && <><Loader className="h-3 w-3 animate-spin" /> Saving...</>}
+                  {editSaveStatus === 'saved' && <><CheckCircle className="h-3 w-3 text-green-500" /> Saved</>}
+                  {editSaveStatus === 'unsaved' && <span className="text-amber-500">Unsaved changes</span>}
+                </span>
               </p>
               <Button variant="outline" onClick={() => setEditDoc(null)}>Cancel</Button>
-              <Button onClick={handleSaveContent} disabled={editLoading}>
+              <Button onClick={handleSaveContent} disabled={editLoading || editSaveStatus === 'saving' || !editContent.trim() || editContent.trim() === '<p></p>' || editContent.trim() === '<p><br></p>'}>
                 <Pencil className="h-4 w-4 mr-2" /> Save
               </Button>
             </div>

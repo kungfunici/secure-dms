@@ -7,6 +7,7 @@ import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -21,6 +22,16 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private final Map<String, Bucket> buckets = new ConcurrentHashMap<>();
     private final Map<String, Bucket> loginBuckets = new ConcurrentHashMap<>();
+
+    private final int loginRequestsPerMinute;
+    private final int apiRequestsPerMinute;
+
+    public RateLimitFilter(
+            @Value("${app.rate-limit.login-requests-per-minute:10}") int loginRequestsPerMinute,
+            @Value("${app.rate-limit.api-requests-per-minute:100}") int apiRequestsPerMinute) {
+        this.loginRequestsPerMinute = loginRequestsPerMinute;
+        this.apiRequestsPerMinute = apiRequestsPerMinute;
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request,
@@ -48,13 +59,13 @@ public class RateLimitFilter extends OncePerRequestFilter {
 
     private Bucket buildLoginBucket() {
         return Bucket.builder()
-                .addLimit(Bandwidth.classic(10, Refill.greedy(10, Duration.ofMinutes(1))))
+                .addLimit(Bandwidth.classic(loginRequestsPerMinute, Refill.greedy(loginRequestsPerMinute, Duration.ofMinutes(1))))
                 .build();
     }
 
     private Bucket buildApiBucket() {
         return Bucket.builder()
-                .addLimit(Bandwidth.classic(100, Refill.greedy(100, Duration.ofMinutes(1))))
+                .addLimit(Bandwidth.classic(apiRequestsPerMinute, Refill.greedy(apiRequestsPerMinute, Duration.ofMinutes(1))))
                 .build();
     }
 

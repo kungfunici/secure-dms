@@ -34,13 +34,14 @@ class AuthServiceTest {
     @Mock private AuthenticationManager authenticationManager;
     @Mock private JwtUtils jwtUtils;
     @Mock private AuditService auditService;
+    @Mock private dev.securecdms.repository.PasswordResetTokenRepository passwordResetTokenRepository;
     @Mock private Authentication authentication;
 
     private AuthService authService;
 
     @BeforeEach
     void setUp() {
-        authService = new AuthService(userRepository, passwordEncoder, authenticationManager, jwtUtils, auditService);
+        authService = new AuthService(userRepository, passwordEncoder, authenticationManager, jwtUtils, auditService, passwordResetTokenRepository);
     }
 
     @Test
@@ -65,7 +66,7 @@ class AuthServiceTest {
         AuthResponse response = authService.register(request);
 
         assertEquals("testuser", response.getUsername());
-        assertEquals("ROLE_USER", response.getRole());
+        assertEquals("USER", response.getRole());
         assertEquals("access-token", response.getToken());
         assertEquals("refresh-token", response.getRefreshToken());
         verify(userRepository).save(any(User.class));
@@ -154,8 +155,10 @@ class AuthServiceTest {
     void forgotPassword_shouldStoreToken() {
         when(userRepository.findByEmail("test@example.com"))
                 .thenReturn(Optional.of(User.builder().id(1L).email("test@example.com").build()));
+        when(passwordResetTokenRepository.save(any())).thenAnswer(i -> i.getArgument(0));
 
         assertDoesNotThrow(() -> authService.forgotPassword("test@example.com"));
+        verify(passwordResetTokenRepository).save(any());
     }
 
     @Test

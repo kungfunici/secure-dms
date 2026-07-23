@@ -7,6 +7,7 @@ import dev.securecdms.model.DocumentPermission;
 import dev.securecdms.model.DocumentVersion;
 import dev.securecdms.model.RecentlyViewed;
 import dev.securecdms.model.Role;
+import dev.securecdms.model.Tag;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
 import dev.securecdms.repository.DocumentVersionRepository;
@@ -26,9 +27,12 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -46,6 +50,10 @@ class DocumentServiceTest {
     @Mock private DocumentVersionRepository documentVersionRepository;
     @Mock private TextExtractionService textExtractionService;
     @Mock private dev.securecdms.repository.FavoriteRepository favoriteRepository;
+    @Mock private dev.securecdms.repository.TagRepository tagRepository;
+    @Mock private RetentionService retentionService;
+    @Mock private WebhookService webhookService;
+    @Mock private ConversionService conversionService;
 
     private DocumentService documentService;
     private User owner;
@@ -54,7 +62,7 @@ class DocumentServiceTest {
 
     @BeforeEach
     void setUp() {
-        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService, recentlyViewedRepository, documentVersionRepository, textExtractionService, favoriteRepository);
+        documentService = new DocumentService(documentRepository, userRepository, folderRepository, storageService, auditService, recentlyViewedRepository, documentVersionRepository, textExtractionService, favoriteRepository, tagRepository, retentionService, webhookService, conversionService);
 
         owner = User.builder().id(1L).username("owner").role(Role.ROLE_USER).build();
         otherUser = User.builder().id(2L).username("other").role(Role.ROLE_USER).build();
@@ -382,7 +390,7 @@ class DocumentServiceTest {
         when(documentRepository.findSharedWithUser(eq(owner), any()))
                 .thenReturn(new PageImpl<>(List.of()));
 
-        var result = documentService.listSharedWithMe("owner", PageRequest.of(0, 10));
+        var result = documentService.listSharedWithMe("owner", null, PageRequest.of(0, 10));
 
         assertTrue(result.getContent().isEmpty());
     }
@@ -507,5 +515,91 @@ class DocumentServiceTest {
         var result = documentService.search("owner", "content", PageRequest.of(0, 10));
 
         assertEquals(1, result.getContent().size());
+    }
+
+    // ---- Tag tests ----
+
+    @Test
+    void addTag_shouldAddTagToDocument() {
+        Tag tag = Tag.builder().id(1L).name("important").build();
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(tagRepository.findById(1L)).thenReturn(Optional.of(tag));
+
+        var response = documentService.addTag(1L, 1L, "owner");
+
+        assertTrue(response.getTags().contains("important"));
+        verify(documentRepository).save(document);
+    }
+
+    @Test
+    void addTag_shouldDenyNonOwner() {
+        when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.addTag(1L, 1L, "other"));
+    }
+
+    @Test
+    void removeTag_shouldRemoveTagFromDocument() {
+        Tag tag = Tag.builder().id(1L).name("important").build();
+        document.setTags(new HashSet<>(Set.of(tag)));
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+
+        var response = documentService.removeTag(1L, 1L, "owner");
+
+        assertTrue(response.getTags().isEmpty());
+    }
+
+    @Test
+    void removeTag_shouldDenyNonOwner() {
+        when(userRepository.findByUsername("other")).thenReturn(Optional.of(otherUser));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.removeTag(1L, 1L, "other"));
+    }
+
+    @Test
+    void duplicate_shouldCopyTags() throws IOException {
+        Tag tag = Tag.builder().id(1L).name("important").build();
+        document.setTags(new HashSet<>(Set.of(tag)));
+
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        doNothing().when(storageService).copy(anyString(), anyString());
+        when(documentRepository.save(any())).thenAnswer(i -> i.getArgument(0));
+        when(documentRepository.findByOwnerAndOriginalFilename(eq(owner), anyString())).thenReturn(Optional.empty());
+
+        var response = documentService.duplicate(1L, "owner");
+
+        assertTrue(response.getTags().contains("important"));
+    }
+
+    @Test
+    void delete_shouldThrowIfLegalHoldActive() {
+        document.setLegalHold(true);
+        document.setDeletedAt(Instant.now());
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+
+        assertThrows(AccessDeniedException.class, () -> documentService.delete(1L, "owner"));
+        verify(documentRepository, never()).delete(any());
+    }
+
+    @Test
+    void delete_shouldAllowWhenLegalHoldInactive() throws IOException {
+        document.setDeletedAt(Instant.now());
+        when(documentRepository.findById(1L)).thenReturn(Optional.of(document));
+        when(userRepository.findByUsername("owner")).thenReturn(Optional.of(owner));
+        doNothing().when(storageService).delete(anyString());
+
+        documentService.delete(1L, "owner");
+
+        verify(documentRepository).delete(document);
+        verify(storageService).delete(document.getStoredFilename());
     }
 }

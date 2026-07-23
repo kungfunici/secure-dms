@@ -12,5 +12,13 @@ services:
       - postgres_data:/var/lib/postgresql/data
     restart: unless-stopped
 
+  libreoffice:
+    build:
+      context: ./libreoffice-sidecar
+    container_name: secure-dms-lo
+    ports:
+      - "3001:3000"
+    restart: unless-stopped
+
 volumes:
   postgres_data:

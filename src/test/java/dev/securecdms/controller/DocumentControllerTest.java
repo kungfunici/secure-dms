@@ -137,7 +137,7 @@ class DocumentControllerTest {
     @Test
     @WithMockUser
     void sharedWithMe_shouldReturnPage() throws Exception {
-        when(documentService.listSharedWithMe(anyString(), any(Pageable.class)))
+        when(documentService.listSharedWithMe(anyString(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(docResponse)));
 
         mockMvc.perform(get("/api/documents/shared-with-me"))
@@ -148,7 +148,7 @@ class DocumentControllerTest {
     @Test
     @WithMockUser
     void sharedByMe_shouldReturnPage() throws Exception {
-        when(documentService.listSharedByMe(anyString(), any(Pageable.class)))
+        when(documentService.listSharedByMe(anyString(), any(), any(Pageable.class)))
                 .thenReturn(new PageImpl<>(List.of(docResponse)));
 
         mockMvc.perform(get("/api/documents/shared-by-me"))

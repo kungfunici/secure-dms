@@ -33,6 +33,9 @@ app:
   storage:
     upload-dir: ${UPLOAD_DIR:./uploads}
 
+  conversion:
+    libreoffice-url: ${LIBREOFFICE_URL:http://localhost:3001}
+
   rate-limit:
     login-requests-per-minute: 10
     api-requests-per-minute: 100

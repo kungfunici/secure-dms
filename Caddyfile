@@ -1,0 +1,40 @@
+# Secure DMS — Caddy Reverse Proxy Configuration
+# Replace example.com with your actual domain in production
+
+{$DOMAIN:localhost} {
+    # Automatic HTTPS via Let's Encrypt (disabled for localhost)
+    tls {$EMAIL:off}
+
+    # Security headers
+    header {
+        X-Content-Type-Options "nosniff"
+        X-Frame-Options "DENY"
+        X-XSS-Protection "1; mode=block"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        Permissions-Policy "camera=(), microphone=(), geolocation=()"
+        -Server
+    }
+
+    # API reverse proxy
+    @api {
+        path /api/* /actuator/*
+    }
+    handle @api {
+        reverse_proxy backend:8080 {
+            header_up X-Real-IP {remote_host}
+            header_up X-Forwarded-For {remote_host}
+            header_up X-Forwarded-Proto {scheme}
+        }
+    }
+
+    # Frontend SPA
+    handle {
+        reverse_proxy frontend:80
+    }
+
+    # Access & error logs
+    log {
+        output file /data/access.log
+        format json
+    }
+}

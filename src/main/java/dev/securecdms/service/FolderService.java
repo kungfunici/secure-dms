@@ -86,7 +86,7 @@ public class FolderService {
         return FolderResponse.builder()
                 .id(folder.getId())
                 .name(folder.getName())
-                .documentCount(folder.getDocuments().size())
+                .documentCount(folder.getDocuments().stream().filter(d -> d.getDeletedAt() == null).count())
                 .createdAt(folder.getCreatedAt())
                 .build();
     }

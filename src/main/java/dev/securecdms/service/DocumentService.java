@@ -10,16 +10,19 @@ import dev.securecdms.model.DocumentVersion;
 import dev.securecdms.model.Favorite;
 import dev.securecdms.model.Folder;
 import dev.securecdms.model.RecentlyViewed;
+import dev.securecdms.model.Tag;
 import dev.securecdms.model.User;
 import dev.securecdms.repository.DocumentRepository;
 import dev.securecdms.repository.DocumentVersionRepository;
 import dev.securecdms.repository.FavoriteRepository;
 import dev.securecdms.repository.FolderRepository;
 import dev.securecdms.repository.RecentlyViewedRepository;
+import dev.securecdms.repository.TagRepository;
 import dev.securecdms.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
@@ -31,6 +34,7 @@ import java.io.OutputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -52,6 +56,10 @@ public class DocumentService {
     private final DocumentVersionRepository documentVersionRepository;
     private final TextExtractionService textExtractionService;
     private final FavoriteRepository favoriteRepository;
+    private final TagRepository tagRepository;
+    private final RetentionService retentionService;
+    private final WebhookService webhookService;
+    private final ConversionService conversionService;
 
     private static final Map<String, String> MIME_TO_DOC_TYPE = Map.ofEntries(
             Map.entry("application/pdf", "PDF"),
@@ -61,10 +69,10 @@ public class DocumentService {
             Map.entry("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "Excel"),
             Map.entry("application/vnd.ms-powerpoint", "PowerPoint"),
             Map.entry("application/vnd.openxmlformats-officedocument.presentationml.presentation", "PowerPoint"),
-            Map.entry("application/vnd.oasis.opendocument.text", "Text"),
-            Map.entry("application/vnd.oasis.opendocument.spreadsheet", "Spreadsheet"),
-            Map.entry("application/vnd.oasis.opendocument.presentation", "Presentation"),
-            Map.entry("application/rtf", "Text"),
+            Map.entry("application/vnd.oasis.opendocument.text", "Word"),
+            Map.entry("application/vnd.oasis.opendocument.spreadsheet", "Excel"),
+            Map.entry("application/vnd.oasis.opendocument.presentation", "PowerPoint"),
+            Map.entry("application/rtf", "Word"),
             Map.entry("text/plain", "Text"),
             Map.entry("text/csv", "CSV"),
             Map.entry("text/markdown", "Text"),
@@ -115,12 +123,16 @@ public class DocumentService {
 
         documentRepository.save(doc);
 
+        retentionService.applyPolicy(doc);
+
         saveVersion(doc, 1, storedFilename, file.getSize(), file.getContentType(), owner);
 
         log.info("Document uploaded: {} by {}", file.getOriginalFilename(), username);
 
         auditService.log("UPLOAD", owner.getId(), doc.getId(),
                 "Uploaded: " + file.getOriginalFilename(), null);
+
+        webhookService.dispatch("UPLOAD", doc.getId(), "Uploaded: " + file.getOriginalFilename(), username);
 
         return toResponse(doc, owner);
     }
@@ -168,6 +180,8 @@ public class DocumentService {
 
         auditService.log("UPDATE", user.getId(), documentId,
                 "Updated: " + doc.getOriginalFilename(), null);
+
+        webhookService.dispatch("UPDATE", documentId, "Updated: " + doc.getOriginalFilename(), username);
 
         return toResponse(doc, user);
     }
@@ -217,8 +231,16 @@ public class DocumentService {
 
         storageService.delete(doc.getStoredFilename());
 
-        String restoredFilename = UUID.randomUUID() + "." + getExtension(version.getStoredFilename());
-        storageService.copy(version.getStoredFilename(), restoredFilename);
+        String versionFile = version.getStoredFilename();
+        if (!versionFile.startsWith("v" + version.getVersionNumber() + "-")) {
+            try {
+                storageService.load(versionFile);
+            } catch (ResourceNotFoundException e) {
+                versionFile = "v" + version.getVersionNumber() + "-" + versionFile;
+            }
+        }
+        String restoredFilename = UUID.randomUUID() + "." + getExtension(versionFile);
+        storageService.copy(versionFile, restoredFilename);
         doc.setStoredFilename(restoredFilename);
         doc.setFileSize(version.getFileSize());
         doc.setContentType(version.getContentType());
@@ -276,6 +298,19 @@ public class DocumentService {
     }
 
     @Transactional
+    public void emptyTrash(String username) throws IOException {
+        User user = getUser(username);
+        Page<Document> trashPage = documentRepository.findTrashByOwner(user, PageRequest.of(0, 1000));
+        List<Long> ids = trashPage.getContent().stream().map(Document::getId).toList();
+        if (ids.isEmpty()) return;
+        for (Long id : ids) {
+            delete(id, username);
+        }
+        auditService.log("BATCH_DELETE", user.getId(), null,
+                "Emptied trash: " + ids.size() + " documents permanently deleted", null);
+    }
+
+    @Transactional
     public void batchMove(List<Long> documentIds, Long folderId, String username) {
         User user = getUser(username);
         for (Long id : documentIds) {
@@ -288,23 +323,34 @@ public class DocumentService {
     @Transactional(readOnly = true)
     public void batchDownload(List<Long> documentIds, String username, OutputStream outputStream) throws IOException {
         User user = getUser(username);
+        int downloaded = 0;
         try (ZipOutputStream zos = new ZipOutputStream(outputStream)) {
             for (Long id : documentIds) {
-                Document doc = getDocument(id);
-                checkAccess(doc, user);
+                try {
+                    Document doc = getDocument(id);
+                    checkAccess(doc, user);
 
-                if (doc.getDeletedAt() != null) continue;
+                    if (doc.getDeletedAt() != null) continue;
 
-                Path filePath = storageService.load(doc.getStoredFilename());
-                ZipEntry entry = new ZipEntry(doc.getOriginalFilename());
-                entry.setSize(doc.getFileSize());
-                zos.putNextEntry(entry);
-                Files.copy(filePath, zos);
-                zos.closeEntry();
+                    String filename = doc.getOriginalFilename();
+                    if (filename == null || filename.isBlank()) filename = "document_" + id;
+
+                    Path filePath = storageService.load(doc.getStoredFilename());
+                    ZipEntry entry = new ZipEntry(filename);
+                    if (doc.getFileSize() != null && doc.getFileSize() > 0) {
+                        entry.setSize(doc.getFileSize());
+                    }
+                    zos.putNextEntry(entry);
+                    Files.copy(filePath, zos);
+                    zos.closeEntry();
+                    downloaded++;
+                } catch (Exception e) {
+                    log.warn("Failed to add document {} to batch download: {}", id, e.getMessage());
+                }
             }
         }
         auditService.log("BATCH_DOWNLOAD", user.getId(), null,
-                "Batch downloaded " + documentIds.size() + " documents", null);
+                "Batch downloaded " + downloaded + " document(s)", null);
     }
 
     // ---- Preview ----
@@ -398,6 +444,103 @@ public class DocumentService {
         return toResponse(doc, user);
     }
 
+    // ---- Render (convert to HTML for editor) ----
+
+    @Transactional(readOnly = true)
+    public String getRender(Long documentId, String username) throws Exception {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Document is in trash");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canRead = hasPermission(doc, user, DocumentPermission.PermissionType.READ)
+                       || hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+
+        if (!isOwner && !canRead) {
+            throw new AccessDeniedException("Access denied to document " + documentId);
+        }
+
+        if (!conversionService.isConvertible(doc.getContentType())) {
+            throw new IllegalArgumentException("Document type is not editable: " + doc.getContentType());
+        }
+
+        if (doc.getContentType().startsWith("text/")) {
+            Path filePath = storageService.load(doc.getStoredFilename());
+            String content = Files.readString(filePath);
+            if (content.isBlank()) return "";
+            if (content.trim().startsWith("<")) {
+                return content;
+            }
+            String escaped = content
+                    .replace("&", "&amp;")
+                    .replace("<", "&lt;")
+                    .replace(">", "&gt;");
+            return "<p>" + escaped.replace("\n", "</p><p>") + "</p>";
+        }
+
+        Path filePath = storageService.load(doc.getStoredFilename());
+        return conversionService.renderToHtml(filePath);
+    }
+
+    @Transactional
+    public DocumentResponse saveRender(Long documentId, String html, String username) throws Exception {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Cannot update a deleted document");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canWrite = hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+
+        if (!isOwner && !canWrite) {
+            throw new AccessDeniedException("Only the owner or a user with WRITE permission can edit this document");
+        }
+
+        if (!conversionService.isConvertible(doc.getContentType())) {
+            throw new IllegalArgumentException("Document type is not editable: " + doc.getContentType());
+        }
+
+        if (doc.getContentType().startsWith("text/")) {
+            return updateContent(documentId, html, username);
+        }
+
+        Path tempDir = Files.createTempDirectory("save-render-");
+        try {
+            Path converted = conversionService.saveFromHtml(html, doc.getOriginalFilename(), tempDir);
+
+            int nextVersion = doc.getCurrentVersion() + 1;
+            saveVersion(doc, nextVersion, doc.getStoredFilename(), doc.getFileSize(), doc.getContentType(), user);
+
+            storageService.delete(doc.getStoredFilename());
+            String newFilename = UUID.randomUUID() + "." + conversionService.extractExtension(doc.getOriginalFilename());
+            storageService.storeBytes(Files.readAllBytes(converted), newFilename);
+            doc.setStoredFilename(newFilename);
+            doc.setFileSize(Files.size(converted));
+            doc.setCurrentVersion(nextVersion);
+            documentRepository.save(doc);
+
+            auditService.log("EDIT", user.getId(), documentId,
+                    "Edited content: " + doc.getOriginalFilename(), null);
+            webhookService.dispatch("UPDATE", documentId, "Edited: " + doc.getOriginalFilename(), username);
+
+            return toResponse(doc, user);
+        } finally {
+            deleteDir(tempDir);
+        }
+    }
+
+    private void deleteDir(Path dir) {
+        try (var files = Files.walk(dir)) {
+            files.sorted((a, b) -> -a.compareTo(b))
+                    .forEach(p -> { try { Files.deleteIfExists(p); } catch (IOException ignored) {} });
+        } catch (IOException ignored) {}
+    }
+
     private boolean isTextContent(String contentType) {
         return contentType != null && (contentType.startsWith("text/")
                 || contentType.equals("application/json")
@@ -410,6 +553,13 @@ public class DocumentService {
     public Page<DocumentResponse> listMyDocuments(String username, Pageable pageable) {
         User owner = getUser(username);
         return documentRepository.findByOwner(owner, pageable).map(d -> toResponse(d, owner));
+    }
+
+    @Transactional(readOnly = true)
+    public DocumentResponse getById(Long documentId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+        return toResponse(doc, user);
     }
 
     @Transactional(readOnly = true)
@@ -446,7 +596,7 @@ public class DocumentService {
                         list -> new org.springframework.data.domain.PageImpl<>(list, pageable, list.size())));
     }
 
-    @Transactional(readOnly = true)
+    @Transactional
     public DownloadResult download(Long documentId, String username) {
         Document doc = getDocument(documentId);
         User user = getUser(username);
@@ -483,14 +633,20 @@ public class DocumentService {
     public record DownloadResult(Path path, String originalFilename) {}
 
     @Transactional(readOnly = true)
-    public Page<DocumentResponse> listSharedWithMe(String username, Pageable pageable) {
+    public Page<DocumentResponse> listSharedWithMe(String username, String query, Pageable pageable) {
         User user = getUser(username);
+        if (query != null && !query.isBlank()) {
+            return documentRepository.searchSharedWithUser(user, query, pageable).map(d -> toResponse(d, user));
+        }
         return documentRepository.findSharedWithUser(user, pageable).map(d -> toResponse(d, user));
     }
 
     @Transactional(readOnly = true)
-    public Page<DocumentResponse> listSharedByMe(String username, Pageable pageable) {
+    public Page<DocumentResponse> listSharedByMe(String username, String query, Pageable pageable) {
         User user = getUser(username);
+        if (query != null && !query.isBlank()) {
+            return documentRepository.searchSharedByOwner(user, query, pageable).map(d -> toResponse(d, user));
+        }
         return documentRepository.findSharedByOwner(user, pageable).map(d -> toResponse(d, user));
     }
 
@@ -505,14 +661,21 @@ public class DocumentService {
             if (doc.getDeletedAt() == null) {
                 doc.setDeletedAt(Instant.now());
                 documentRepository.save(doc);
+                favoriteRepository.findByUserAndDocument(user, doc)
+                        .ifPresent(f -> favoriteRepository.delete(f));
                 auditService.log("TRASH", user.getId(), documentId,
                         "Moved to trash: " + doc.getOriginalFilename(), null);
+                webhookService.dispatch("TRASH", documentId, "Moved to trash: " + doc.getOriginalFilename(), username);
                 log.info("Document moved to trash: {} by {}", doc.getOriginalFilename(), username);
             } else {
+                if (doc.getLegalHold()) {
+                    throw new AccessDeniedException("Cannot delete document with active legal hold");
+                }
                 storageService.delete(doc.getStoredFilename());
                 documentRepository.delete(doc);
                 auditService.log("DELETE", user.getId(), documentId,
                         "Permanently deleted: " + doc.getOriginalFilename(), null);
+                webhookService.dispatch("DELETE", documentId, "Permanently deleted: " + doc.getOriginalFilename(), username);
                 log.info("Document permanently deleted: {} by {}", doc.getOriginalFilename(), username);
             }
         } else {
@@ -547,6 +710,92 @@ public class DocumentService {
                 "Restored: " + doc.getOriginalFilename(), null);
         log.info("Document restored: {} by {}", doc.getOriginalFilename(), username);
 
+        return toResponse(doc, user);
+    }
+
+    // ---- Duplicate ----
+
+    @Transactional
+    public DocumentResponse duplicate(Long documentId, String username) throws IOException {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (doc.getDeletedAt() != null) {
+            throw new AccessDeniedException("Cannot duplicate a deleted document");
+        }
+
+        boolean isOwner = doc.getOwner().getId().equals(user.getId());
+        boolean canRead = hasPermission(doc, user, DocumentPermission.PermissionType.READ)
+                       || hasPermission(doc, user, DocumentPermission.PermissionType.WRITE);
+        if (!isOwner && !canRead) {
+            throw new AccessDeniedException("Access denied");
+        }
+
+        String newFilename = UUID.randomUUID() + "." + getExtension(doc.getOriginalFilename());
+        storageService.copy(doc.getStoredFilename(), newFilename);
+
+        String baseName = doc.getOriginalFilename();
+        String dot = baseName.contains(".") ? baseName.substring(baseName.lastIndexOf('.')) : "";
+        String nameWithoutExt = dot.isEmpty() ? baseName : baseName.substring(0, baseName.lastIndexOf('.'));
+        String newName = nameWithoutExt + " (Copy)" + dot;
+
+        int count = 2;
+        while (documentRepository.findByOwnerAndOriginalFilename(user, newName).isPresent()) {
+            newName = nameWithoutExt + " (Copy " + count++ + ")" + dot;
+        }
+
+        Document copy = Document.builder()
+                .originalFilename(newName)
+                .storedFilename(newFilename)
+                .contentType(doc.getContentType())
+                .fileSize(doc.getFileSize())
+                .description(doc.getDescription())
+                .documentType(doc.getDocumentType())
+                .owner(user)
+                .folder(doc.getFolder())
+                .extractedText(doc.getExtractedText())
+                .currentVersion(1)
+                .tags(new HashSet<>(doc.getTags()))
+                .build();
+
+        documentRepository.save(copy);
+
+        auditService.log("DUPLICATE", user.getId(), copy.getId(),
+                "Duplicated: " + doc.getOriginalFilename() + " -> " + newName, null);
+
+        return toResponse(copy, user);
+    }
+
+    // ---- Tags ----
+
+    @Transactional
+    public DocumentResponse addTag(Long documentId, Long tagId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (!doc.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("Only the owner can tag documents");
+        }
+
+        Tag tag = tagRepository.findById(tagId)
+                .orElseThrow(() -> new ResourceNotFoundException("Tag not found: " + tagId));
+
+        doc.getTags().add(tag);
+        documentRepository.save(doc);
+        return toResponse(doc, user);
+    }
+
+    @Transactional
+    public DocumentResponse removeTag(Long documentId, Long tagId, String username) {
+        Document doc = getDocument(documentId);
+        User user = getUser(username);
+
+        if (!doc.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("Only the owner can remove tags");
+        }
+
+        doc.getTags().removeIf(t -> t.getId().equals(tagId));
+        documentRepository.save(doc);
         return toResponse(doc, user);
     }
 
@@ -713,7 +962,10 @@ public class DocumentService {
                 .uploadedAt(doc.getUploadedAt())
                 .currentVersion(doc.getCurrentVersion())
                 .versionCount(versionCount)
-                .favorite(isFavorite);
+                .favorite(isFavorite)
+                .tags(doc.getTags().stream().map(Tag::getName).toList())
+                .retentionAt(doc.getRetentionAt())
+                .legalHold(doc.getLegalHold() != null && doc.getLegalHold());
         if (doc.getFolder() != null) {
             builder.folderId(doc.getFolder().getId());
             builder.folderName(doc.getFolder().getName());

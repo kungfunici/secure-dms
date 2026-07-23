@@ -29,9 +29,12 @@ app:
   storage:
     upload-dir: ${java.io.tmpdir}/secure-dms-test
 
+  cors:
+    allowed-origins: http://localhost:5173
+
   rate-limit:
-    login-requests-per-minute: 1000
-    api-requests-per-minute: 1000
+    login-requests-per-minute: 10000
+    api-requests-per-minute: 100000
 
 server:
   port: 0

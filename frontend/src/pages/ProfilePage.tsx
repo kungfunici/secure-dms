@@ -5,6 +5,7 @@ import { Input } from '@/components/ui/input'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { useAuth } from '@/contexts/AuthContext'
 import { auth, users, type UserResponse } from '@/lib/api'
+import { LoadingScreen } from '@/components/ui/spinner'
 import { ArrowLeft, Upload, Trash2, FileText, Clock, Lock } from 'lucide-react'
 
 export default function ProfilePage() {
@@ -55,11 +56,7 @@ export default function ProfilePage() {
   }
 
   if (loading || !profile) {
-    return (
-      <div className="min-h-screen bg-muted/30 flex items-center justify-center">
-        <p className="text-muted-foreground">Loading...</p>
-      </div>
-    )
+    return <LoadingScreen text="Loading profile..." />
   }
 
   return (
@@ -98,7 +95,7 @@ export default function ProfilePage() {
           <CardContent className="space-y-6">
             <div className="flex items-center gap-4">
               <img
-                src={profile.profilePicture ? users.avatarUrl(profile.id) : '/default-avatar.svg'}
+                src={profile.profilePicture ? `${users.avatarUrl(profile.id)}?t=${Date.now()}` : '/default-avatar.svg'}
                 alt="Avatar"
                 className="w-20 h-20 rounded-full object-cover border-2 border-border"
                 onError={(e) => { (e.target as HTMLImageElement).src = '/default-avatar.svg' }}
@@ -167,6 +164,8 @@ export default function ProfilePage() {
                 setError('')
                 setSuccess('')
                 if (newPassword !== confirmPassword) { setError('Passwords do not match'); return }
+                if (newPassword === currentPassword) { setError('New password must be different from current password'); return }
+                if (newPassword.length < 8) { setError('Password must be at least 8 characters'); return }
                 try {
                   await auth.changePassword(currentPassword, newPassword)
                   setCurrentPassword(''); setNewPassword(''); setConfirmPassword('')
